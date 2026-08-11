@@ -306,18 +306,26 @@ function action_saveClinical_(body) {
     var vData = sheetRows_(visitsSh);
 
     var num = function (x) { var n = parseFloat(x); return isNaN(n) ? 0 : n; };
-    var prevPending = 0;
     var targetRow = -1;
+    var otherVisits = [];
     for (var i = 0; i < vData.rows.length; i++) {
       var row = vData.rows[i];
       if (row[vData.idx.patientId] !== patientId) continue;
       if (row[vData.idx.visitId] === visitId) { targetRow = i; continue; }
-      prevPending += num(row[vData.idx.balanceDue]);
+      otherVisits.push({ visitNo: num(row[vData.idx.visitNo]), cost: num(row[vData.idx.treatmentCost]), paid: num(row[vData.idx.amountPaid]) });
     }
     if (targetRow === -1) return { ok: false, error: 'Visit not found: ' + visitId };
+    otherVisits.sort(function (a, b) { return a.visitNo - b.visitNo; });
+    var prevPending = 0;
+    otherVisits.forEach(function (v) {
+      prevPending += v.cost - v.paid;
+      if (prevPending < 0) prevPending = 0;
+    });
 
-    var balanceDue = num(cform.treatmentCost) + prevPending - num(cform.amountPaid);
-    var paymentStatus = balanceDue <= 0 ? 'Fully Paid' : (num(cform.amountPaid) > 0 ? 'Partially paid' : 'Not paid');
+    var amountToCollect = num(cform.treatmentCost) + prevPending;
+    var remaining = amountToCollect - num(cform.amountPaid);
+    var balanceDue = remaining;
+    var paymentStatus = remaining <= 0 ? 'Fully Paid' : (num(cform.amountPaid) > 0 ? 'Partially paid' : 'Not paid');
     var r = targetRow + 2;
     var fields = {
       problem: cform.problem || '',

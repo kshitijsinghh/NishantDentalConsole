@@ -50,7 +50,7 @@ input:focus, select:focus, textarea:focus {
 .card-view {
   display: none;
 }
-@media (max-width: 780px) {
+@media (max-width: 760px) {
   .table-view {
     display: none;
   }

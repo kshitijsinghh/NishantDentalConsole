@@ -118,14 +118,15 @@ export default function App({ user, onLogout }) {
     setIntakeError('');
   }
 
-  function onLookup() {
-    const p = findByMobile(db, form.mobile);
+  function onLookup(mobile) {
+    const m = mobile || form.mobile;
+    const p = findByMobile(db, m);
     if (p) {
       setLookupState('existing');
       setExistingPatientId(p.patientId);
       setIntakeError('');
       setForm((f) => ({ ...f, name: p.name, age: p.age, gender: p.gender }));
-    } else if (normMobile(form.mobile)) {
+    } else if (normMobile(m)) {
       setLookupState('new');
       setExistingPatientId('');
       setIntakeError('');
@@ -135,6 +136,7 @@ export default function App({ user, onLogout }) {
   async function onSaveIntake() {
     const mm = normMobile(form.mobile);
     if (!mm) return setIntakeError('Please enter a mobile number.');
+    if (mm.length !== 10) return setIntakeError('Mobile number must be exactly 10 digits.');
     if (!form.name.trim() || !String(form.age).trim() || !form.gender || !form.date) {
       return setIntakeError('Name, age, gender and date are required.');
     }
@@ -261,11 +263,14 @@ export default function App({ user, onLogout }) {
   const rangePatientIds = Array.from(new Set(rangeRows.map((r) => r.pid)));
   let pendingAmount = 0;
   let pendingPatients = 0;
-  rangePatientIds.forEach((pid) => {
+  db.order.forEach((pid) => {
+    const sorted = db.patients[pid].visits.slice().sort((a, b) => (a.no || 0) - (b.no || 0));
     let bal = 0;
-    db.patients[pid].visits.forEach((v) => { bal += num(v.clinical && v.clinical.balanceDue); });
-    if (bal > 0) pendingPatients++;
-    pendingAmount += bal;
+    sorted.forEach((v) => {
+      bal += num(v.clinical && v.clinical.treatmentCost) - num(v.clinical && v.clinical.amountPaid);
+      if (bal < 0) bal = 0;
+    });
+    if (bal > 0) { pendingPatients++; pendingAmount += bal; }
   });
   const pendingVisits = rangeRows.filter((r) => !r.done).length;
   const stats = [
@@ -312,15 +317,24 @@ export default function App({ user, onLogout }) {
   const pendingList = [];
   let pendingTotal = 0;
   if (curP) {
-    curP.visits.slice().sort((a, b) => (a.no || 0) - (b.no || 0)).forEach((v) => {
-      const bal = num(v.clinical && v.clinical.balanceDue);
+    const sorted = curP.visits.slice().sort((a, b) => (a.no || 0) - (b.no || 0));
+    let runBal = 0;
+    let lastReset = -1;
+    sorted.forEach((v, i) => {
+      runBal += num(v.clinical && v.clinical.treatmentCost) - num(v.clinical && v.clinical.amountPaid);
+      if (runBal < 0) { runBal = 0; lastReset = i; }
+    });
+    pendingTotal = runBal;
+    sorted.forEach((v, i) => {
       const cost = num(v.clinical && v.clinical.treatmentCost);
+      const paid = num(v.clinical && v.clinical.amountPaid);
+      const visitOwes = cost - paid;
       const trr = v.clinical ? (/Other/.test(v.clinical.treatment) && v.clinical.treatmentOther ? v.clinical.treatmentOther : v.clinical.treatment) : '';
       const isCur = v.visitId === curVisitId;
-      if (bal > 0) {
-        pendingTotal += bal;
-        pendingList.push({ visitId: v.visitId, dateLabel: fmtDate(v.date), amount: inr(bal), current: isCur });
+      if (i > lastReset && visitOwes > 0) {
+        pendingList.push({ visitId: v.visitId, dateLabel: fmtDate(v.date), amount: inr(visitOwes), current: isCur });
       }
+      const bal = num(v.clinical && v.clinical.balanceDue);
       history.push({
         visitId: v.visitId, dateLabel: fmtDate(v.date), treatmentLabel: trr || '—',
         cost: cost ? inr(cost) : '—', balance: bal ? inr(bal) : '—',
@@ -330,7 +344,13 @@ export default function App({ user, onLogout }) {
   }
   cur.history = history;
   let prevPending = 0;
-  if (curP) curP.visits.forEach((v) => { if (v.visitId !== curVisitId) prevPending += num(v.clinical && v.clinical.balanceDue); });
+  if (curP) {
+    const prevSorted = curP.visits.filter((v) => v.visitId !== curVisitId).slice().sort((a, b) => (a.no || 0) - (b.no || 0));
+    prevSorted.forEach((v) => {
+      prevPending += num(v.clinical && v.clinical.treatmentCost) - num(v.clinical && v.clinical.amountPaid);
+      if (prevPending < 0) prevPending = 0;
+    });
+  }
   const computedBalance = num(cform.treatmentCost) + prevPending - num(cform.amountPaid);
 
   // Appointment count for the selected next date in clinical form
@@ -390,7 +410,10 @@ export default function App({ user, onLogout }) {
             cur={cur} hasHistory={history.length > 0}
             cform={cform} onSetField={(k, v) => setCform((f) => ({ ...f, [k]: v }))}
             showTreatmentOther={/Other/.test(cform.treatment)}
-            prevPendingLabel={inr(prevPending)} computedBalance={computedBalance}
+            prevPending={prevPending} prevPendingLabel={inr(prevPending)}
+            amountToCollect={num(cform.treatmentCost) + prevPending}
+            amountToCollectLabel={inr(num(cform.treatmentCost) + prevPending)}
+            computedBalance={computedBalance}
             computedBalanceLabel={inr(computedBalance)}
             balanceColor={computedBalance > 0 ? '#c0392b' : '#12805a'}
             hasPending={pendingList.length > 0} noPending={pendingList.length === 0}

@@ -29,8 +29,13 @@ export default function Intake({
         </label>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <input
-            className="fld" value={form.mobile} onChange={(e) => onSetField('mobile', e.target.value)}
-            inputMode="numeric" placeholder="e.g. 98765 43210"
+            className="fld" value={form.mobile}
+            onChange={(e) => {
+              const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
+              onSetField('mobile', digits);
+              if (digits.length === 10) setTimeout(() => onLookup(digits), 0);
+            }}
+            inputMode="numeric" placeholder="e.g. 9876543210" maxLength={10}
             style={{ flex: 1, minWidth: 200, ...fieldStyle }}
           />
           <button

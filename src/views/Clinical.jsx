@@ -22,7 +22,7 @@ function dash(x) { return (x === undefined || x === null || x === '') ? '—' : 
 
 export default function Clinical({
   cur, hasHistory, cform, onSetField,
-  showTreatmentOther, prevPendingLabel, computedBalance, computedBalanceLabel, balanceColor,
+  showTreatmentOther, prevPending, prevPendingLabel, amountToCollect, amountToCollectLabel, computedBalance, computedBalanceLabel, balanceColor,
   hasPending, noPending, pendingTotalLabel, pendingList,
   hasQr, noQr, qrUrl, qrUploadLabel, onUploadQr,
   showQr, onOpenQr, onCloseQr,
@@ -33,7 +33,8 @@ export default function Clinical({
   const [detailVisit, setDetailVisit] = useState(null);
   const [showAllHistory, setShowAllHistory] = useState(false);
 
-  const computedStatus = computedBalance <= 0 ? 'Fully Paid' : (num(cform.amountPaid) > 0 ? 'Partially paid' : 'Not paid');
+  const remaining = amountToCollect - num(cform.amountPaid);
+  const computedStatus = remaining <= 0 ? 'Fully Paid' : (num(cform.amountPaid) > 0 ? 'Partially paid' : 'Not paid');
   const statusColorMap = { 'Fully Paid': ['#e3f5ec', '#12805a'], 'Partially paid': ['#fdf0dc', '#a9741a'], 'Not paid': ['#fdecea', '#c0392b'] };
   const scm = statusColorMap[computedStatus] || ['#eef4f3', '#8aa8a3'];
 
@@ -218,14 +219,33 @@ export default function Clinical({
         <h3 style={{ ...h3Style, margin: '24px 0 16px' }}>Billing</h3>
         <div style={{ display: 'grid', gridTemplateColumns: FLUID_GRID_2COL, gap: 16 }}>
           <div>
-            <label style={labelStyle}>Treatment cost (₹)</label>
+            <label style={labelStyle}>Charges for this visit (₹)</label>
             <input
               className="fld" value={cform.treatmentCost} onChange={(e) => onSetField('treatmentCost', e.target.value)}
               type="number" min="0" placeholder="0" style={fieldStyle}
             />
           </div>
           <div>
-            <label style={labelStyle}>Amount paid (₹)</label>
+            <label style={labelStyle}>Pending payment <span style={{ color: '#98b0ab', fontWeight: 400 }}>(auto)</span></label>
+            <div style={{ ...fieldStyle, display: 'flex', alignItems: 'center', background: '#f7fbfa', border: '1px solid #e2efec', color: prevPending > 0 ? '#c0392b' : '#12805a', fontWeight: 700 }}>
+              {prevPendingLabel}
+            </div>
+          </div>
+          <div
+            style={{
+              gridColumn: '1 / -1', borderRadius: 12, padding: '14px 16px', background: '#f2f9f8', border: '1px solid #cfe3df',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+            }}
+          >
+            <span style={{ fontSize: 13, color: '#5c7a76' }}>
+              Amount to be collected = charges for this visit + pending payment
+            </span>
+            <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 22, color: '#0e3b39' }}>
+              {amountToCollectLabel}
+            </span>
+          </div>
+          <div>
+            <label style={labelStyle}>Paid in this visit (₹)</label>
             <input
               className="fld" value={cform.amountPaid} onChange={(e) => onSetField('amountPaid', e.target.value)}
               type="number" min="0" placeholder="0" style={fieldStyle}
@@ -245,19 +265,6 @@ export default function Clinical({
                 {computedStatus}
               </span>
             </div>
-          </div>
-          <div
-            style={{
-              gridColumn: '1 / -1', borderRadius: 12, padding: '14px 16px', background: '#f2f9f8', border: '1px solid #cfe3df',
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap',
-            }}
-          >
-            <span style={{ fontSize: 13, color: '#5c7a76' }}>
-              Balance due = (treatment cost + previous pending <strong style={{ color: '#0e3b39' }}>{prevPendingLabel}</strong>) − amount paid
-            </span>
-            <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 22, color: balanceColor }}>
-              {computedBalanceLabel}
-            </span>
           </div>
         </div>
 
