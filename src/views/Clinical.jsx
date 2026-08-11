@@ -31,6 +31,7 @@ export default function Clinical({
   db, curPatientId,
 }) {
   const [detailVisit, setDetailVisit] = useState(null);
+  const [showAllHistory, setShowAllHistory] = useState(false);
 
   const computedStatus = computedBalance <= 0 ? 'Fully Paid' : (num(cform.amountPaid) > 0 ? 'Partially paid' : 'Not paid');
   const statusColorMap = { 'Fully Paid': ['#e3f5ec', '#12805a'], 'Partially paid': ['#fdf0dc', '#a9741a'], 'Not paid': ['#fdecea', '#c0392b'] };
@@ -98,60 +99,77 @@ export default function Clinical({
         <div style={{ background: '#fff', border: '1px solid #dfece9', borderRadius: 18, padding: '20px 24px', marginTop: 16 }}>
           <h3 style={{ ...h3Style, marginBottom: 4 }}>Visit history</h3>
           <p style={{ color: '#98b0ab', fontSize: 12.5, marginBottom: 12 }}>Tap a row to see everything recorded at that visit.</p>
-          <div className="table-view" style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5, minWidth: 600 }}>
-              <thead>
-                <tr style={{ textAlign: 'left', color: '#7a9994', fontSize: 11.5, letterSpacing: '.05em', textTransform: 'uppercase' }}>
-                  <th style={{ padding: '8px 10px', fontWeight: 700 }}>Visit</th>
-                  <th style={{ padding: '8px 10px', fontWeight: 700 }}>Date</th>
-                  <th style={{ padding: '8px 10px', fontWeight: 700 }}>Treatment</th>
-                  <th style={{ padding: '8px 10px', fontWeight: 700 }}>Cost</th>
-                  <th style={{ padding: '8px 10px', fontWeight: 700 }}>Balance</th>
-                  <th style={{ padding: '8px 10px', fontWeight: 700 }}>Status</th>
-                  <th style={{ padding: '8px 10px' }}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {cur.history.map((h) => (
-                  <tr
-                    key={h.visitId}
-                    onClick={() => setDetailVisit({ pid: curPatientId, visitId: h.visitId })}
-                    style={{ borderTop: '1px solid #eef4f3', background: h.rowBg, cursor: 'pointer' }}
-                  >
-                    <td style={{ padding: '9px 10px', fontFamily: 'ui-monospace,monospace', fontSize: 12, color: '#0e756c', fontWeight: 600 }}>{h.visitId}</td>
-                    <td style={{ padding: '9px 10px', color: '#5c7a76' }}>{h.dateLabel}</td>
-                    <td style={{ padding: '9px 10px', color: '#5c7a76' }}>{h.treatmentLabel}</td>
-                    <td style={{ padding: '9px 10px', color: '#33534f' }}>{h.cost}</td>
-                    <td style={{ padding: '9px 10px', color: '#33534f' }}>{h.balance}</td>
-                    <td style={{ padding: '9px 10px', color: '#5c7a76' }}>{h.status}</td>
-                    <td style={{ padding: '9px 10px', textAlign: 'right', color: '#0e756c', fontWeight: 700, fontSize: 12 }}>View &rarr;</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {(() => {
+            const visibleHistory = showAllHistory ? cur.history : cur.history.slice(-2);
+            const hasMore = cur.history.length > 2 && !showAllHistory;
+            return (
+              <>
+                <div className="table-view" style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5, minWidth: 600 }}>
+                    <thead>
+                      <tr style={{ textAlign: 'left', color: '#7a9994', fontSize: 11.5, letterSpacing: '.05em', textTransform: 'uppercase' }}>
+                        <th style={{ padding: '8px 10px', fontWeight: 700 }}>Visit</th>
+                        <th style={{ padding: '8px 10px', fontWeight: 700 }}>Date</th>
+                        <th style={{ padding: '8px 10px', fontWeight: 700 }}>Treatment</th>
+                        <th style={{ padding: '8px 10px', fontWeight: 700 }}>Cost</th>
+                        <th style={{ padding: '8px 10px', fontWeight: 700 }}>Balance</th>
+                        <th style={{ padding: '8px 10px', fontWeight: 700 }}>Status</th>
+                        <th style={{ padding: '8px 10px' }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleHistory.map((h) => (
+                        <tr
+                          key={h.visitId}
+                          onClick={() => setDetailVisit({ pid: curPatientId, visitId: h.visitId })}
+                          style={{ borderTop: '1px solid #eef4f3', background: h.rowBg, cursor: 'pointer' }}
+                        >
+                          <td style={{ padding: '9px 10px', fontFamily: 'ui-monospace,monospace', fontSize: 12, color: '#0e756c', fontWeight: 600 }}>{h.visitId}</td>
+                          <td style={{ padding: '9px 10px', color: '#5c7a76' }}>{h.dateLabel}</td>
+                          <td style={{ padding: '9px 10px', color: '#5c7a76' }}>{h.treatmentLabel}</td>
+                          <td style={{ padding: '9px 10px', color: '#33534f' }}>{h.cost}</td>
+                          <td style={{ padding: '9px 10px', color: '#33534f' }}>{h.balance}</td>
+                          <td style={{ padding: '9px 10px', color: '#5c7a76' }}>{h.status}</td>
+                          <td style={{ padding: '9px 10px', textAlign: 'right', color: '#0e756c', fontWeight: 700, fontSize: 12 }}>View &rarr;</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
 
-          <div className="card-view">
-            {cur.history.map((h) => (
-              <div
-                key={h.visitId}
-                onClick={() => setDetailVisit({ pid: curPatientId, visitId: h.visitId })}
-                style={{ padding: '10px 12px', borderTop: '1px solid #eef4f3', background: h.rowBg, display: 'flex', flexDirection: 'column', gap: 3, cursor: 'pointer' }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
-                  <span style={{ fontFamily: 'ui-monospace,monospace', fontSize: 12, color: '#0e756c', fontWeight: 600 }}>{h.visitId}</span>
-                  <span style={{ fontSize: 12, color: '#5c7a76' }}>{h.dateLabel}</span>
+                <div className="card-view">
+                  {visibleHistory.map((h) => (
+                    <div
+                      key={h.visitId}
+                      onClick={() => setDetailVisit({ pid: curPatientId, visitId: h.visitId })}
+                      style={{ padding: '10px 12px', borderTop: '1px solid #eef4f3', background: h.rowBg, display: 'flex', flexDirection: 'column', gap: 3, cursor: 'pointer' }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                        <span style={{ fontFamily: 'ui-monospace,monospace', fontSize: 12, color: '#0e756c', fontWeight: 600 }}>{h.visitId}</span>
+                        <span style={{ fontSize: 12, color: '#5c7a76' }}>{h.dateLabel}</span>
+                      </div>
+                      <div style={{ fontSize: 13, color: '#5c7a76' }}>{h.treatmentLabel}</div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: 12.5, color: '#33534f' }}>
+                          Cost {h.cost} · Balance {h.balance} · {h.status}
+                        </span>
+                        <span style={{ color: '#0e756c', fontWeight: 700, fontSize: 12 }}>View &rarr;</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <div style={{ fontSize: 13, color: '#5c7a76' }}>{h.treatmentLabel}</div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: 12.5, color: '#33534f' }}>
-                    Cost {h.cost} · Balance {h.balance} · {h.status}
-                  </span>
-                  <span style={{ color: '#0e756c', fontWeight: 700, fontSize: 12 }}>View &rarr;</span>
-                </div>
-              </div>
-            ))}
-          </div>
+
+                {hasMore && (
+                  <button
+                    onClick={() => setShowAllHistory(true)}
+                    style={{ display: 'block', width: '100%', padding: '12px 0', border: 0, borderTop: '1px solid #eef4f3', background: 'none', color: '#0e756c', fontWeight: 700, fontSize: 13.5, cursor: 'pointer' }}
+                  >
+                    View more ({cur.history.length - 2} earlier visits)
+                  </button>
+                )}
+              </>
+            );
+          })()}
         </div>
       )}
 
@@ -195,13 +213,6 @@ export default function Clinical({
               />
             </div>
           )}
-          <div style={{ gridColumn: '1 / -1' }}>
-            <label style={labelStyle}>Treating doctor</label>
-            <input
-              className="fld" value={cform.treatingDoctor} onChange={(e) => onSetField('treatingDoctor', e.target.value)}
-              placeholder="Doctor's name" style={fieldStyle}
-            />
-          </div>
         </div>
 
         <h3 style={{ ...h3Style, margin: '24px 0 16px' }}>Billing</h3>
