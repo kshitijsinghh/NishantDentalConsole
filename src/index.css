@@ -50,6 +50,10 @@ input:focus, select:focus, textarea:focus {
 .card-view {
   display: none;
 }
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 @media (max-width: 760px) {
   .table-view {
     display: none;

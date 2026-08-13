@@ -1,4 +1,5 @@
 import { useState } from 'react';
+
 import { TOUCH_BTN } from '../styles';
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -6,7 +7,6 @@ function ymd(dt) { return dt.getFullYear() + '-' + pad2(dt.getMonth() + 1) + '-'
 function parseYmd(s) { const a = s.split('-').map(Number); return new Date(a[0], a[1] - 1, a[2]); }
 function addDays(s, n) { const dt = parseYmd(s); dt.setDate(dt.getDate() + n); return ymd(dt); }
 function todayStr() { return new Date().toISOString().slice(0, 10); }
-
 function fmtDateShort(d) {
   if (!d) return '—';
   try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }); }
@@ -16,7 +16,6 @@ function fmtDateShort(d) {
 export default function Dashboard({
   dateFrom, dateTo, onSetRange, onRefresh, refreshing,
   stats, q, onSetQ, visitRows, hasVisits, noVisits,
-  payFilter, onSetPayFilter,
 }) {
   const [showRange, setShowRange] = useState(false);
   const [calMonth, setCalMonth] = useState((dateFrom || todayStr()).slice(0, 7));
@@ -54,7 +53,7 @@ export default function Dashboard({
   }
 
   const rangeLabel = (dateFrom || dateTo)
-    ? (fmtDateShort(dateFrom) + '  –  ' + fmtDateShort(dateTo || dateFrom))
+    ? (fmtDateShort(dateFrom) + ' – ' + fmtDateShort(dateTo || dateFrom))
     : 'All time';
 
   const cm = calMonth.split('-').map(Number);
@@ -79,10 +78,9 @@ export default function Dashboard({
     cells.push({ key: ds, blank: false, label: String(d), date: ds, bg, col, fw, border });
   }
   while (cells.length % 7 !== 0) cells.push({ key: 'e' + cells.length, blank: true });
+
   const calWeeks = [];
   for (let i = 0; i < cells.length; i += 7) calWeeks.push(cells.slice(i, i + 7));
-
-  const payFilterOptions = ['All', 'Not paid', 'Partially paid', 'Fully Paid'];
 
   return (
     <div>
@@ -116,7 +114,6 @@ export default function Dashboard({
               <path d="M21 12a9 9 0 1 1-2.64-6.36M21 4v5h-5" />
             </svg>
           </button>
-
           {showRange && (
             <div
               style={{
@@ -179,25 +176,6 @@ export default function Dashboard({
               </div>
             </div>
           )}
-        </div>
-
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: '#8aa8a3', textTransform: 'uppercase', letterSpacing: '.05em' }}>Payment</span>
-          {payFilterOptions.map((val) => (
-            <button
-              key={val}
-              onClick={() => onSetPayFilter(val)}
-              style={{
-                ...TOUCH_BTN, padding: '8px 14px', borderRadius: 100, cursor: 'pointer',
-                border: '1px solid ' + (payFilter === val ? '#0e756c' : '#d6e7e3'),
-                background: payFilter === val ? '#0e756c' : '#fff',
-                color: payFilter === val ? '#fff' : '#5c7a76',
-                fontWeight: 700, fontSize: 13,
-              }}
-            >
-              {val}
-            </button>
-          ))}
         </div>
       </div>
 
@@ -319,6 +297,7 @@ export default function Dashboard({
             </div>
           </>
         )}
+
         {noVisits && (
           <div style={{ padding: '54px 20px', textAlign: 'center', color: '#8aa8a3' }}>
             <p style={{ fontSize: 16, fontWeight: 600, color: '#5c7a76' }}>No records yet.</p>

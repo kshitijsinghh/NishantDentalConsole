@@ -9,7 +9,7 @@ const labelStyle = { display: 'block', fontWeight: 700, fontSize: 13.5, color: '
 
 export default function Intake({
   form, onSetField, onLookup, lookupState, existingPatientId, nextVisitNo,
-  previewPatientId, previewVisitId, intakeError, onGoDash, onSaveIntake, saving,
+  previewPatientId, previewVisitId, intakeError, onGoBack, onSaveIntake, saving,
 }) {
   return (
     <div style={{ maxWidth: 720, margin: '0 auto' }}>
@@ -114,7 +114,7 @@ export default function Intake({
 
       <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>
         <button
-          onClick={onGoDash}
+          onClick={onGoBack}
           style={{ ...TOUCH_BTN, padding: '13px 22px', borderRadius: 11, border: '1px solid #d6e7e3', background: '#fff', color: '#5c7a76', fontWeight: 700, fontSize: 15, cursor: 'pointer' }}
         >
           Cancel

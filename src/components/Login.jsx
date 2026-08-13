@@ -29,7 +29,7 @@ export default function Login({ onAuth }) {
         storeUser(user);
         onAuth(user);
       })
-      .catch(() => { setError('Sign-in failed. Please try again.'); setChecking(false); });
+      .catch(() => { setError('Something went wrong, please try again'); setChecking(false); });
   }, [onAuth]);
 
   function handleSignIn() {
@@ -80,7 +80,14 @@ export default function Login({ onAuth }) {
         </p>
 
         {checking ? (
-          <p style={{ color: '#5c7a76', fontSize: 14 }}>Signing in…</p>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, padding: '8px 0' }}>
+            <div style={{
+              width: 40, height: 40, border: '3.5px solid #d6e7e3',
+              borderTopColor: '#12a094', borderRadius: '50%',
+              animation: 'spin .7s linear infinite',
+            }} />
+            <span style={{ color: '#5c7a76', fontSize: 14, fontWeight: 600 }}>Signing in...</span>
+          </div>
         ) : (
           <button
             onClick={handleSignIn}

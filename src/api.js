@@ -14,28 +14,38 @@ function assertConfigured() {
 }
 
 async function handle(res) {
-  if (!res.ok) throw new Error('Request failed: HTTP ' + res.status);
+  if (!res.ok) throw new Error('Something went wrong, please try again');
   const json = await res.json();
-  if (!json.ok) throw new Error(json.error || 'Request failed.');
+  if (!json.ok) throw new Error('Something went wrong, please try again');
   return json;
+}
+
+async function fetchWithRetry(url, opts) {
+  try {
+    const res = await fetch(url, opts);
+    if (res.ok) return res;
+    const retry = await fetch(url, opts);
+    return retry;
+  } catch {
+    const retry = await fetch(url, opts);
+    return retry;
+  }
 }
 
 export async function fetchList() {
   assertConfigured();
-  const res = await fetch(BASE_URL + '?action=list');
+  const res = await fetchWithRetry(BASE_URL + '?action=list');
   return handle(res);
 }
 
-// POST bodies are sent as text/plain (not application/json) so the browser
-// treats this as a CORS "simple request" and skips a preflight OPTIONS call,
-// which Apps Script Web Apps don't handle.
 async function post(payload) {
   assertConfigured();
-  const res = await fetch(BASE_URL, {
+  const opts = {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify(payload),
-  });
+  };
+  const res = await fetchWithRetry(BASE_URL, opts);
   return handle(res);
 }
 

@@ -26,7 +26,7 @@ export default function Clinical({
   hasPending, noPending, pendingTotalLabel, pendingList,
   hasQr, noQr, qrUrl, qrUploadLabel, onUploadQr,
   showQr, onOpenQr, onCloseQr,
-  savedFlash, onGoDash, onSaveClinical, saving, error,
+  savedFlash, onGoBack, onSaveClinical, saving, error,
   apptCountText, showApptCount,
   db, curPatientId,
 }) {
@@ -67,13 +67,13 @@ export default function Clinical({
   return (
     <div style={{ maxWidth: 840, margin: '0 auto' }}>
       <button
-        onClick={onGoDash}
+        onClick={onGoBack}
         style={{
           ...TOUCH_BTN, justifyContent: 'flex-start', border: 0, background: 'none', color: '#0e756c',
           fontWeight: 700, fontSize: 14, cursor: 'pointer', padding: '10px 0', marginBottom: 4, marginLeft: -2,
         }}
       >
-        &larr; Back to dashboard
+        &larr; Back
       </button>
 
       <div
@@ -373,7 +373,7 @@ export default function Clinical({
 
       <div style={{ display: 'flex', gap: 12, marginTop: 20, justifyContent: 'flex-end' }}>
         <button
-          onClick={onGoDash}
+          onClick={onGoBack}
           style={{ ...TOUCH_BTN, padding: '11px 20px', borderRadius: 10, border: '1px solid #d6e7e3', background: '#fff', color: '#5c7a76', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}
         >
           Cancel
