@@ -12,46 +12,21 @@ export const CHIEF_COMPLAINTS = [
 ];
 
 export const TREATMENT_GROUPS = [
-  'Preventive', 'Restorative', 'Prosthodontics', 'Endodontics', 'Oral Surgery',
-  'Implantology', 'Paediatric Dentistry', 'Consultation', 'Preventive, Restorative',
-  'Restorative, Prosthodontics', 'Prosthodontics, Restorative', 'Endodontics, Restorative',
-  'Endodontics, Prosthodontics', 'Endodontics, Prosthodontics, Restorative',
-  'Restorative, Prosthodontics, Preventive', 'Prosthodontics, Restorative, Preventive',
-  'Oral Surgery, Preventive', 'Oral Surgery, Endodontics', 'Restorative, Oral Surgery, Preventive',
-  'Preventive, Endodontics', 'Preventive, Restorative, Prosthodontics', 'Consultation, Preventive',
-  'Consultation, Endodontics', 'Preventive, Oral Surgery', 'Preventive, Prosthodontics', 'Other',
+  'Preventive', 'Restorative', 'Prosthodontics', 'Consultation', 'Oral Surgery',
+  'Endodontics', 'Pain', 'Paediatric Dentistry', 'Other', 'Implantology',
 ];
 
 export const TREATMENTS = [
-  'Scaling & Polishing', 'Composite Restoration', 'GIC Restoration', 'RCT', 'Re-RCT',
-  'Access Opening', 'BMP', 'WL', 'Obturation', 'ICM', 'Irrigation', 'Core Build-up',
-  'Post & Core', 'Crown Preparation', 'Crown', 'Crown Recementation', 'Crown Removal',
-  'Bridge', 'Bridge Removal', 'Endocrown Preparation', 'Extraction', 'Surgical Extraction',
-  'Suture Removal', 'Implant', 'Impression', 'Temporary Restoration', 'Night Guard Delivery',
-  'Consultation', 'Scaling & Polishing, Composite Restoration', 'Scaling & Polishing, GIC Restoration',
-  'Scaling & Polishing, ICM', 'Scaling & Polishing, Access Opening',
-  'Scaling & Polishing, Composite Restoration, GIC Restoration',
-  'Scaling & Polishing, Composite Restoration, Crown', 'Scaling & Polishing, Core Build-up, Crown Preparation',
-  'Scaling & Polishing, Crown', 'Composite Restoration, GIC Restoration',
-  'Composite Restoration, Core Build-up, Crown Preparation',
-  'Composite Restoration, Suture Removal, Scaling & Polishing', 'GIC Restoration, Composite Restoration',
-  'GIC Restoration, Temporary Restoration', 'Crown, Composite Restoration',
-  'Crown, Composite Restoration, Scaling & Polishing', 'Crown, Core Build-up, Crown Preparation',
-  'Crown, ICM', 'Core Build-up, Crown Preparation', 'Core Build-up, Composite Restoration',
-  'Core Build-up, Crown Recementation', 'Core Build-up, Crown', 'Crown Preparation, Composite Restoration',
-  'Crown Recementation, Composite Restoration', 'Post & Core, Crown Preparation',
-  'Post & Core, Crown Preparation, GIC Restoration', 'Post & Core, Composite Restoration',
-  'Access Opening, BMP', 'Access Opening, BMP, ICM', 'Access Opening, BMP, WL',
-  'Access Opening, BMP, RCT', 'Access Opening, WL', 'Access Opening, WL, BMP',
-  'Access Opening, Composite Restoration', 'BMP, WL, Obturation', 'ICM, Irrigation, WL',
-  'ICM, Core Build-up', 'Irrigation, ICM', 'RCT, Obturation', 'RCT, Composite Restoration',
-  'RCT, WL', 'RCT, WL, Obturation, Post & Core', 'RCT, Access Opening, BMP, WL',
-  'RCT, Access Opening, WL', 'Obturation, RCT', 'Obturation, RCT, GIC Restoration',
-  'Obturation, Access Opening', 'Obturation, Core Build-up', 'Obturation, Composite Restoration',
-  'Endocrown Preparation, Impression', 'Consultation, Scaling & Polishing',
-  'Consultation, Access Opening', 'Extraction, Scaling & Polishing', 'Extraction, Obturation',
-  'Crown Removal, BMP', 'Other', 'Other, Extraction', 'Composite Restoration, Other',
+  'Scaling & Polishing', 'Composite Restoration', 'Bridge', 'Consultation',
+  'GIC Restoration', 'Extraction', 'Irrigation', 'RCT', 'Post & Core',
+  'Crown Preparation', 'Crown', 'BMP', 'Access Opening', 'Crown Recementation',
+  'Obturation', 'ICM', 'Core Build-up', 'Suture Removal', 'WL',
+  'Surgical Extraction', 'Bridge Removal', 'Impression', 'Night Guard Delivery',
+  'Temporary Restoration', 'Other', 'Endocrown Preparation', 'Implant',
+  'Crown Removal', 'Re-RCT',
 ];
+
+export const TOOTH_NUMBERS = Array.from({ length: 32 }, (_, i) => String(i + 1));
 
 export const PAYMENT_MODES = ['UPI', 'Debit Card', 'Credit Card'];
 export const YES_NO = ['Yes', 'No'];

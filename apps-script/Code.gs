@@ -9,7 +9,7 @@
  *   Patients: patientId | mobile | name | age | gender | createdAt
  *   Visits:   visitId | patientId | visitNo | date | createdAt | done |
  *             problem | chiefComplaint | treatmentGroup | treatment |
- *             treatmentOther | treatingDoctor | treatmentCost | amountPaid |
+ *             toothNumber | treatmentOther | treatingDoctor | treatmentCost | amountPaid |
  *             balanceDue | paymentMode | paymentStatus | treatmentStage |
  *             googleReviewTaken | nextAppointment | comments
  *   Settings: key | value   (rows: seq, upiQr)
@@ -33,7 +33,7 @@ var QR_FOLDER_NAME = 'Clinic Console QR';
 var PATIENTS_HEADERS = ['patientId', 'mobile', 'name', 'age', 'gender', 'createdAt'];
 var VISITS_HEADERS = [
   'visitId', 'patientId', 'visitNo', 'date', 'createdAt', 'done',
-  'problem', 'chiefComplaint', 'treatmentGroup', 'treatment', 'treatmentOther',
+  'problem', 'chiefComplaint', 'treatmentGroup', 'treatment', 'toothNumber', 'treatmentOther',
   'treatingDoctor', 'treatmentCost', 'amountPaid', 'balanceDue',
   'paymentMode', 'paymentStatus', 'treatmentStage', 'googleReviewTaken',
   'nextAppointment', 'nextAppointmentTime', 'comments',
@@ -177,6 +177,7 @@ function readSnapshot_() {
         chiefComplaint: v.chiefComplaint || '',
         treatmentGroup: v.treatmentGroup || '',
         treatment: v.treatment || '',
+        toothNumber: v.toothNumber instanceof Date ? '' : String(v.toothNumber || ''),
         treatmentOther: v.treatmentOther || '',
         treatingDoctor: v.treatingDoctor || '',
         treatmentCost: v.treatmentCost === '' ? '' : String(v.treatmentCost),
@@ -332,6 +333,7 @@ function action_saveClinical_(body) {
       chiefComplaint: cform.chiefComplaint || '',
       treatmentGroup: cform.treatmentGroup || '',
       treatment: cform.treatment || '',
+      toothNumber: cform.toothNumber || '',
       treatmentOther: cform.treatmentOther || '',
       treatingDoctor: cform.treatingDoctor || '',
       treatmentCost: cform.treatmentCost || '',
@@ -347,7 +349,9 @@ function action_saveClinical_(body) {
       done: true,
     };
     for (var key in fields) {
-      visitsSh.getRange(r, vData.idx[key] + 1).setValue(fields[key]);
+      var cell = visitsSh.getRange(r, vData.idx[key] + 1);
+      if (key === 'toothNumber') cell.setNumberFormat('@');
+      cell.setValue(fields[key]);
     }
 
     return readSnapshot_();

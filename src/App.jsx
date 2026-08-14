@@ -6,7 +6,7 @@ import Clinical from './views/Clinical';
 import Appointments from './views/Appointments';
 import Patients from './views/Patients';
 import PatientDetail from './views/PatientDetail';
-import { fetchList, saveIntake, saveClinical, uploadQr } from './api';
+import { fetchList, saveIntake, saveClinical, uploadQr, getCachedList } from './api';
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -41,7 +41,7 @@ function fmtTime(t) {
 }
 function blankClinical() {
   return {
-    problem: '', chiefComplaint: '', treatmentGroup: '', treatment: '', treatmentOther: '',
+    problem: '', chiefComplaint: '', treatmentGroup: '', treatment: '', toothNumber: '', treatmentOther: '',
     treatingDoctor: '', treatmentCost: '', amountPaid: '', balanceDue: '', paymentMode: '',
     treatmentStage: '', googleReviewTaken: '', nextAppointment: '', nextAppointmentTime: '', comments: '',
   };
@@ -100,7 +100,14 @@ export default function App({ user, onLogout }) {
   }
 
   useEffect(() => {
-    loadList(false);
+    const cached = getCachedList();
+    if (cached) {
+      applySnapshot(cached);
+      setLoading(false);
+      loadList(true);
+    } else {
+      loadList(false);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -170,24 +177,42 @@ export default function App({ user, onLogout }) {
     if (!form.name.trim() || !String(form.age).trim() || !form.gender || !form.date) {
       return setIntakeError('Name, age, gender and date are required.');
     }
-    setSavingIntake(true);
     setIntakeError('');
+
+    const intakeData = { mobile: mm, name: form.name.trim(), age: form.age, gender: form.gender, date: form.date };
+    const existingP = findByMobile(db, mm);
+    const optPid = existingP ? existingP.patientId : 'P' + String(db.seq + 1).padStart(4, '0');
+    const optNo = existingP ? existingP.visits.length + 1 : 1;
+    const optVid = optPid + '_' + optNo;
+
+    const optVisit = { visitId: optVid, no: optNo, date: form.date, done: false, clinical: null, createdAt: new Date().toISOString() };
+    const optDb = { ...db, patients: { ...db.patients } };
+    if (existingP) {
+      optDb.patients[optPid] = { ...existingP, visits: [...existingP.visits, optVisit] };
+    } else {
+      optDb.patients[optPid] = { patientId: optPid, name: intakeData.name, age: intakeData.age, gender: intakeData.gender, mobile: mm, visits: [optVisit] };
+      optDb.order = [optPid, ...db.order];
+      optDb.seq = db.seq + 1;
+    }
+
+    setDbState(optDb);
+    setCurPatientId(optPid);
+    setCurVisitId(optVid);
+    setCform(blankClinical());
+    setSavedFlash(false);
+    setClinicalError('');
+    setForm({ mobile: '', name: '', age: '', gender: '', date: today() });
+    setLookupState('');
+    setExistingPatientId('');
+    replaceView('clinical');
+
     try {
-      const res = await saveIntake({ mobile: form.mobile, name: form.name.trim(), age: form.age, gender: form.gender, date: form.date });
+      const res = await saveIntake(intakeData);
       applySnapshot(res);
-      setCurPatientId(res.patientId);
-      setCurVisitId(res.visitId);
-      setCform(blankClinical());
-      setSavedFlash(false);
-      setClinicalError('');
-      setForm({ mobile: '', name: '', age: '', gender: '', date: today() });
-      setLookupState('');
-      setExistingPatientId('');
-      replaceView('clinical');
+      if (res.patientId !== optPid) setCurPatientId(res.patientId);
+      if (res.visitId !== optVid) setCurVisitId(res.visitId);
     } catch {
-      setIntakeError('Something went wrong, please try again');
-    } finally {
-      setSavingIntake(false);
+      setClinicalError('Visit creation failed — please go back and try again.');
     }
   }
 
@@ -386,6 +411,7 @@ export default function App({ user, onLogout }) {
       if (runBal < 0) { runBal = 0; lastReset = i; }
     });
     pendingTotal = runBal;
+    const rawPending = [];
     sorted.forEach((v, i) => {
       const cost = num(v.clinical && v.clinical.treatmentCost);
       const paid = num(v.clinical && v.clinical.amountPaid);
@@ -393,7 +419,7 @@ export default function App({ user, onLogout }) {
       const trr = v.clinical ? (/Other/.test(v.clinical.treatment) && v.clinical.treatmentOther ? v.clinical.treatmentOther : v.clinical.treatment) : '';
       const isCur = v.visitId === curVisitId;
       if (i > lastReset && visitOwes > 0) {
-        pendingList.push({ visitId: v.visitId, dateLabel: fmtDate(v.date), amount: inr(visitOwes), current: isCur });
+        rawPending.push({ visitId: v.visitId, dateLabel: fmtDate(v.date), rawAmount: visitOwes, current: isCur });
       }
       const bal = num(v.clinical && v.clinical.balanceDue);
       history.push({
@@ -402,6 +428,18 @@ export default function App({ user, onLogout }) {
         status: (v.clinical && v.clinical.paymentStatus) || '—', current: isCur, rowBg: isCur ? '#eef7f6' : '#fff',
       });
     });
+    let credit = rawPending.reduce((s, p) => s + p.rawAmount, 0) - pendingTotal;
+    for (const p of rawPending) {
+      if (credit <= 0) break;
+      const absorb = Math.min(credit, p.rawAmount);
+      p.rawAmount -= absorb;
+      credit -= absorb;
+    }
+    for (const p of rawPending) {
+      if (p.rawAmount > 0) {
+        pendingList.push({ visitId: p.visitId, dateLabel: p.dateLabel, amount: inr(p.rawAmount), current: p.current });
+      }
+    }
   }
   cur.history = history;
   let prevPending = 0;

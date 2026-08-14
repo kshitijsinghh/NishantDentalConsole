@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import {
-  CHIEF_COMPLAINTS, TREATMENT_GROUPS, TREATMENTS, PAYMENT_MODES, YES_NO, TREATMENT_STAGES,
+  CHIEF_COMPLAINTS, TREATMENT_GROUPS, TREATMENTS, TOOTH_NUMBERS, PAYMENT_MODES, YES_NO, TREATMENT_STAGES,
 } from '../options';
 import { TOUCH_BTN, FLUID_GRID_2COL } from '../styles';
 
@@ -12,6 +12,85 @@ const labelStyle = { display: 'block', fontWeight: 700, fontSize: 13.5, marginBo
 const h3Style = { fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 16, color: '#0e3b39' };
 
 function num(x) { const n = parseFloat(x); return isNaN(n) ? 0 : n; }
+
+function MultiSelect({ value, options, onChange, placeholder }) {
+  const [open, setOpen] = useState(false);
+  const selected = value ? value.split(', ').filter(Boolean) : [];
+
+  function toggle(opt) {
+    const next = selected.includes(opt) ? selected.filter((s) => s !== opt) : [...selected, opt];
+    onChange(next.join(', '));
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <div
+        onClick={() => setOpen(!open)}
+        style={{
+          ...fieldStyle, display: 'flex', flexWrap: 'wrap', gap: 6, cursor: 'pointer',
+          alignItems: 'center', minHeight: 44,
+        }}
+      >
+        {selected.length === 0 && <span style={{ color: '#98b0ab' }}>{placeholder || 'Select…'}</span>}
+        {selected.map((s) => (
+          <span
+            key={s}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '3px 10px', borderRadius: 100, background: '#e0f0ed',
+              fontSize: 13, fontWeight: 600, color: '#0e756c',
+            }}
+          >
+            {s}
+            <span
+              onClick={(e) => { e.stopPropagation(); toggle(s); }}
+              style={{ cursor: 'pointer', fontSize: 15, lineHeight: 1, color: '#5c7a76', marginLeft: 2 }}
+            >&times;</span>
+          </span>
+        ))}
+      </div>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+          <div style={{
+            position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+            maxHeight: 220, overflowY: 'auto', background: '#fff',
+            border: '1px solid #d6e7e3', borderRadius: 10, marginTop: 4,
+            boxShadow: '0 8px 24px rgba(14,59,57,.12)',
+          }}>
+            {options.map((opt) => {
+              const on = selected.includes(opt);
+              return (
+                <div
+                  key={opt} onClick={() => toggle(opt)}
+                  style={{
+                    padding: '10px 14px', cursor: 'pointer', fontSize: 14,
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    background: on ? '#eef7f6' : '#fff', borderBottom: '1px solid #f0f6f5',
+                  }}
+                >
+                  <span style={{
+                    width: 18, height: 18, borderRadius: 4,
+                    border: '2px solid ' + (on ? '#12a094' : '#d6e7e3'),
+                    background: on ? '#12a094' : '#fff',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                  }}>
+                    {on && (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M20 6L9 17l-5-5" />
+                      </svg>
+                    )}
+                  </span>
+                  <span style={{ color: on ? '#0e3b39' : '#5c7a76', fontWeight: on ? 600 : 400 }}>{opt}</span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 function inr(n) { return '₹' + Math.round(n).toLocaleString('en-IN'); }
 function fmtDate(d) {
   if (!d) return '—';
@@ -50,7 +129,7 @@ export default function Clinical({
         rows: [
           { k: 'Problem', v: dash(c.problem) }, { k: 'Chief complaint', v: dash(c.chiefComplaint) },
           { k: 'Treatment group', v: dash(c.treatmentGroup) }, { k: 'Treatment', v: dash(trd) },
-          { k: 'Treating doctor', v: dash(c.treatingDoctor) },
+          { k: 'Tooth number', v: dash(c.toothNumber) }, { k: 'Treating doctor', v: dash(c.treatingDoctor) },
           { k: 'Treatment cost', v: c.treatmentCost ? inr(num(c.treatmentCost)) : '—' },
           { k: 'Amount paid', v: c.amountPaid ? inr(num(c.amountPaid)) : '—' },
           { k: 'Balance due', v: c.balanceDue ? inr(num(c.balanceDue)) : '—' },
@@ -193,17 +272,24 @@ export default function Clinical({
           </div>
           <div>
             <label style={labelStyle}>Treatment group</label>
-            <select value={cform.treatmentGroup} onChange={(e) => onSetField('treatmentGroup', e.target.value)} style={fieldStyle}>
-              <option value="">Select…</option>
-              {TREATMENT_GROUPS.map((tg) => <option key={tg} value={tg}>{tg}</option>)}
-            </select>
+            <MultiSelect
+              value={cform.treatmentGroup} options={TREATMENT_GROUPS}
+              onChange={(v) => onSetField('treatmentGroup', v)} placeholder="Select…"
+            />
           </div>
           <div style={{ gridColumn: '1 / -1' }}>
             <label style={labelStyle}>Treatment</label>
-            <select value={cform.treatment} onChange={(e) => onSetField('treatment', e.target.value)} style={fieldStyle}>
-              <option value="">Select…</option>
-              {TREATMENTS.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
+            <MultiSelect
+              value={cform.treatment} options={TREATMENTS}
+              onChange={(v) => onSetField('treatment', v)} placeholder="Select…"
+            />
+          </div>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label style={labelStyle}>Tooth number</label>
+            <MultiSelect
+              value={cform.toothNumber} options={TOOTH_NUMBERS}
+              onChange={(v) => onSetField('toothNumber', v)} placeholder="Select…"
+            />
           </div>
           {showTreatmentOther && (
             <div style={{ gridColumn: '1 / -1' }}>

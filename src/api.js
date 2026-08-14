@@ -3,6 +3,19 @@
 // nothing is cached in localStorage.
 
 const BASE_URL = import.meta.env.VITE_SHEETS_API_URL;
+const CACHE_KEY = 'patientpad_list_cache';
+
+export function getCachedList() {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch { return null; }
+}
+
+function cacheList(data) {
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(data)); } catch {}
+}
 
 function assertConfigured() {
   if (!BASE_URL) {
@@ -35,7 +48,9 @@ async function fetchWithRetry(url, opts) {
 export async function fetchList() {
   assertConfigured();
   const res = await fetchWithRetry(BASE_URL + '?action=list');
-  return handle(res);
+  const json = await handle(res);
+  cacheList(json);
+  return json;
 }
 
 async function post(payload) {
