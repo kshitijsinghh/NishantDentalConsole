@@ -10,10 +10,11 @@ const fieldStyle = {
 };
 const labelStyle = { display: 'block', fontWeight: 700, fontSize: 13.5, marginBottom: 7 };
 const h3Style = { fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 16, color: '#0e3b39' };
+const roStyle = { opacity: 0.7, background: '#f0f4f3', cursor: 'default' };
 
 function num(x) { const n = parseFloat(x); return isNaN(n) ? 0 : n; }
 
-function MultiSelect({ value, options, onChange, placeholder }) {
+function MultiSelect({ value, options, onChange, placeholder, disabled }) {
   const [open, setOpen] = useState(false);
   const selected = value ? value.split(', ').filter(Boolean) : [];
 
@@ -25,13 +26,16 @@ function MultiSelect({ value, options, onChange, placeholder }) {
   return (
     <div style={{ position: 'relative' }}>
       <div
-        onClick={() => setOpen(!open)}
+        onClick={() => !disabled && setOpen(!open)}
         style={{
-          ...fieldStyle, display: 'flex', flexWrap: 'wrap', gap: 6, cursor: 'pointer',
-          alignItems: 'center', minHeight: 44,
+          ...fieldStyle, display: 'flex', flexWrap: 'wrap', gap: 6,
+          cursor: disabled ? 'default' : 'pointer',
+          alignItems: 'center', minHeight: 44, paddingRight: 32,
+          opacity: disabled ? 0.7 : 1, background: disabled ? '#f0f4f3' : fieldStyle.background,
+          position: 'relative',
         }}
       >
-        {selected.length === 0 && <span style={{ color: '#98b0ab' }}>{placeholder || 'Select…'}</span>}
+        {selected.length === 0 && <span style={{ color: '#98b0ab', flex: 1 }}>{placeholder || 'Select…'}</span>}
         {selected.map((s) => (
           <span
             key={s}
@@ -42,14 +46,19 @@ function MultiSelect({ value, options, onChange, placeholder }) {
             }}
           >
             {s}
-            <span
+            {!disabled && <span
               onClick={(e) => { e.stopPropagation(); toggle(s); }}
               style={{ cursor: 'pointer', fontSize: 15, lineHeight: 1, color: '#5c7a76', marginLeft: 2 }}
-            >&times;</span>
+            >&times;</span>}
           </span>
         ))}
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8aa8a3" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+          style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}
+        >
+          <path d="M6 9l6 6 6-6" />
+        </svg>
       </div>
-      {open && (
+      {open && !disabled && (
         <>
           <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
           <div style={{
@@ -97,6 +106,14 @@ function fmtDate(d) {
   try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }); }
   catch { return d; }
 }
+function fmtTime(t) {
+  if (!t) return '—';
+  const [h, m] = t.split(':').map(Number);
+  if (isNaN(h)) return '—';
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const hr = h % 12 || 12;
+  return hr + ':' + String(m).padStart(2, '0') + ' ' + ampm;
+}
 function dash(x) { return (x === undefined || x === null || x === '') ? '—' : x; }
 
 export default function Clinical({
@@ -108,6 +125,7 @@ export default function Clinical({
   savedFlash, onGoBack, onSaveClinical, saving, error,
   apptCountText, showApptCount,
   db, curPatientId,
+  readOnly, onCreateNewVisit,
 }) {
   const [detailVisit, setDetailVisit] = useState(null);
   const [showAllHistory, setShowAllHistory] = useState(false);
@@ -127,16 +145,16 @@ export default function Clinical({
       detail = {
         title: dv.visitId, dateLabel: fmtDate(dv.date), name: dp.name,
         rows: [
-          { k: 'Problem', v: dash(c.problem) }, { k: 'Chief complaint', v: dash(c.chiefComplaint) },
+          { k: 'Chief complaint', v: dash(c.chiefComplaint) }, { k: 'Description', v: dash(c.chiefDescription) },
           { k: 'Treatment group', v: dash(c.treatmentGroup) }, { k: 'Treatment', v: dash(trd) },
-          { k: 'Tooth number', v: dash(c.toothNumber) }, { k: 'Treating doctor', v: dash(c.treatingDoctor) },
+          { k: 'Tooth number', v: dash(c.toothNumber) },
           { k: 'Treatment cost', v: c.treatmentCost ? inr(num(c.treatmentCost)) : '—' },
           { k: 'Amount paid', v: c.amountPaid ? inr(num(c.amountPaid)) : '—' },
           { k: 'Balance due', v: c.balanceDue ? inr(num(c.balanceDue)) : '—' },
           { k: 'Payment mode', v: dash(c.paymentMode) }, { k: 'Payment status', v: dash(c.paymentStatus) },
           { k: 'Treatment stage', v: dash(c.treatmentStage) }, { k: 'Google review taken', v: dash(c.googleReviewTaken) },
           { k: 'Next appointment', v: c.nextAppointment ? fmtDate(c.nextAppointment) : '—' },
-          { k: 'Next appointment time', v: c.nextAppointmentTime || '—' },
+          { k: 'Next appointment time', v: fmtTime(c.nextAppointmentTime) },
           { k: 'Comments', v: dash(c.comments) },
         ],
       };
@@ -163,7 +181,7 @@ export default function Clinical({
       >
         <div>
           <span style={{ fontSize: 12, letterSpacing: '.14em', textTransform: 'uppercase', color: '#7fd4c9', fontWeight: 700 }}>
-            Doctor · Clinical record
+            {readOnly ? 'Appointment · Visit details' : 'Doctor · Clinical record'}
           </span>
           <h1 style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 26, marginTop: 4 }}>{cur.name}</h1>
           <p style={{ color: '#bfe3dd', fontSize: 14, marginTop: 2 }}>{cur.ageGender} · {cur.mobile}</p>
@@ -254,41 +272,41 @@ export default function Clinical({
       )}
 
       <div style={{ background: '#fff', border: '1px solid #dfece9', borderRadius: 18, padding: 24, marginTop: 16 }}>
-        <h3 style={{ ...h3Style, marginBottom: 16 }}>Diagnosis</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: FLUID_GRID_2COL, gap: 16 }}>
-          <div style={{ gridColumn: '1 / -1' }}>
-            <label style={labelStyle}>Problem</label>
-            <input
-              className="fld" value={cform.problem} onChange={(e) => onSetField('problem', e.target.value)}
-              placeholder="Describe the presenting problem" style={fieldStyle}
+        <h3 style={{ ...h3Style, marginBottom: 16 }}>Doctor's form</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 16 }}>
+          <div>
+            <label style={labelStyle}>Chief complaint</label>
+            <MultiSelect
+              value={cform.chiefComplaint} options={CHIEF_COMPLAINTS}
+              onChange={(v) => onSetField('chiefComplaint', v)} placeholder="Select…" disabled={readOnly}
             />
           </div>
           <div>
-            <label style={labelStyle}>Chief complaint</label>
-            <select value={cform.chiefComplaint} onChange={(e) => onSetField('chiefComplaint', e.target.value)} style={fieldStyle}>
-              <option value="">Select…</option>
-              {CHIEF_COMPLAINTS.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
+            <label style={labelStyle}>Description</label>
+            <input
+              className="fld" value={cform.chiefDescription} onChange={(e) => onSetField('chiefDescription', e.target.value)}
+              placeholder="Notes on the chief complaint" style={{ ...fieldStyle, ...(readOnly ? roStyle : {}) }} disabled={readOnly}
+            />
           </div>
           <div>
             <label style={labelStyle}>Treatment group</label>
             <MultiSelect
               value={cform.treatmentGroup} options={TREATMENT_GROUPS}
-              onChange={(v) => onSetField('treatmentGroup', v)} placeholder="Select…"
+              onChange={(v) => onSetField('treatmentGroup', v)} placeholder="Select…" disabled={readOnly}
             />
           </div>
-          <div style={{ gridColumn: '1 / -1' }}>
+          <div>
             <label style={labelStyle}>Treatment</label>
             <MultiSelect
               value={cform.treatment} options={TREATMENTS}
-              onChange={(v) => onSetField('treatment', v)} placeholder="Select…"
+              onChange={(v) => onSetField('treatment', v)} placeholder="Select…" disabled={readOnly}
             />
           </div>
           <div style={{ gridColumn: '1 / -1' }}>
             <label style={labelStyle}>Tooth number</label>
             <MultiSelect
               value={cform.toothNumber} options={TOOTH_NUMBERS}
-              onChange={(v) => onSetField('toothNumber', v)} placeholder="Select…"
+              onChange={(v) => onSetField('toothNumber', v)} placeholder="Select…" disabled={readOnly}
             />
           </div>
           {showTreatmentOther && (
@@ -296,7 +314,7 @@ export default function Clinical({
               <label style={labelStyle}>Treatment — other (specify)</label>
               <input
                 className="fld" value={cform.treatmentOther} onChange={(e) => onSetField('treatmentOther', e.target.value)}
-                placeholder="Type the treatment" style={fieldStyle}
+                placeholder="Type the treatment" style={{ ...fieldStyle, ...(readOnly ? roStyle : {}) }} disabled={readOnly}
               />
             </div>
           )}
@@ -308,7 +326,7 @@ export default function Clinical({
             <label style={labelStyle}>Charges for this visit (₹)</label>
             <input
               className="fld" value={cform.treatmentCost} onChange={(e) => onSetField('treatmentCost', e.target.value)}
-              type="number" min="0" placeholder="0" style={fieldStyle}
+              type="number" min="0" placeholder="0" style={{ ...fieldStyle, ...(readOnly ? roStyle : {}) }} disabled={readOnly}
             />
           </div>
           <div>
@@ -334,12 +352,12 @@ export default function Clinical({
             <label style={labelStyle}>Paid in this visit (₹)</label>
             <input
               className="fld" value={cform.amountPaid} onChange={(e) => onSetField('amountPaid', e.target.value)}
-              type="number" min="0" placeholder="0" style={fieldStyle}
+              type="number" min="0" placeholder="0" style={{ ...fieldStyle, ...(readOnly ? roStyle : {}) }} disabled={readOnly}
             />
           </div>
           <div>
             <label style={labelStyle}>Payment mode</label>
-            <select value={cform.paymentMode} onChange={(e) => onSetField('paymentMode', e.target.value)} style={fieldStyle}>
+            <select value={cform.paymentMode} onChange={(e) => onSetField('paymentMode', e.target.value)} style={{ ...fieldStyle, ...(readOnly ? roStyle : {}) }} disabled={readOnly}>
               <option value="">Select…</option>
               {PAYMENT_MODES.map((pm) => <option key={pm} value={pm}>{pm}</option>)}
             </select>
@@ -354,7 +372,7 @@ export default function Clinical({
           </div>
         </div>
 
-        <div style={{ marginTop: 16, display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'stretch' }}>
+        {!readOnly && <div style={{ marginTop: 16, display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'stretch' }}>
           <div style={{ flex: 1, minWidth: 240, borderRadius: 12, padding: '14px 16px', background: '#fdf6f4', border: '1px solid #f6d3c8' }}>
             {hasPending && (
               <div>
@@ -401,13 +419,13 @@ export default function Clinical({
               <input type="file" accept="image/*" onChange={onUploadQr} style={{ display: 'none' }} />
             </label>
           </div>
-        </div>
+        </div>}
 
         <h3 style={{ ...h3Style, margin: '24px 0 16px' }}>Follow-up</h3>
         <div style={{ display: 'grid', gridTemplateColumns: FLUID_GRID_2COL, gap: 16 }}>
           <div>
             <label style={labelStyle}>Treatment stage</label>
-            <select value={cform.treatmentStage} onChange={(e) => onSetField('treatmentStage', e.target.value)} style={fieldStyle}>
+            <select value={cform.treatmentStage} onChange={(e) => onSetField('treatmentStage', e.target.value)} style={{ ...fieldStyle, ...(readOnly ? roStyle : {}) }} disabled={readOnly}>
               <option value="">Select…</option>
               {TREATMENT_STAGES.map((ts) => <option key={ts} value={ts}>{ts}</option>)}
             </select>
@@ -415,7 +433,7 @@ export default function Clinical({
           {cform.treatmentStage === 'Complete' && (
             <div>
               <label style={labelStyle}>Google review taken</label>
-              <select value={cform.googleReviewTaken} onChange={(e) => onSetField('googleReviewTaken', e.target.value)} style={fieldStyle}>
+              <select value={cform.googleReviewTaken} onChange={(e) => onSetField('googleReviewTaken', e.target.value)} style={{ ...fieldStyle, ...(readOnly ? roStyle : {}) }} disabled={readOnly}>
                 <option value="">Select…</option>
                 {YES_NO.map((yn) => <option key={yn} value={yn}>{yn}</option>)}
               </select>
@@ -425,7 +443,7 @@ export default function Clinical({
             <>
               <div>
                 <label style={labelStyle}>Next appointment date</label>
-                <input type="date" value={cform.nextAppointment} onChange={(e) => onSetField('nextAppointment', e.target.value)} style={fieldStyle} />
+                <input type="date" value={cform.nextAppointment} onChange={(e) => onSetField('nextAppointment', e.target.value)} style={{ ...fieldStyle, ...(readOnly ? roStyle : {}) }} disabled={readOnly} />
                 {showApptCount && (
                   <p style={{ marginTop: 7, fontSize: 13, color: '#0e756c', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#12a094' }} />
@@ -435,7 +453,7 @@ export default function Clinical({
               </div>
               <div>
                 <label style={labelStyle}>Next appointment time</label>
-                <input type="time" value={cform.nextAppointmentTime} onChange={(e) => onSetField('nextAppointmentTime', e.target.value)} style={fieldStyle} />
+                <input type="time" value={cform.nextAppointmentTime} onChange={(e) => onSetField('nextAppointmentTime', e.target.value)} style={{ ...fieldStyle, ...(readOnly ? roStyle : {}) }} disabled={readOnly} />
               </div>
             </>
           )}
@@ -444,7 +462,7 @@ export default function Clinical({
             <textarea
               value={cform.comments} onChange={(e) => onSetField('comments', e.target.value)}
               placeholder="Any notes for this visit…"
-              style={{ ...fieldStyle, minHeight: 84, resize: 'vertical' }}
+              style={{ ...fieldStyle, minHeight: 84, resize: 'vertical', ...(readOnly ? roStyle : {}) }} disabled={readOnly}
             />
           </div>
         </div>
@@ -457,24 +475,44 @@ export default function Clinical({
         <p style={{ marginTop: 14, color: '#c0392b', fontSize: 14, fontWeight: 600 }}>{error}</p>
       )}
 
-      <div style={{ display: 'flex', gap: 12, marginTop: 20, justifyContent: 'flex-end' }}>
-        <button
-          onClick={onGoBack}
-          style={{ ...TOUCH_BTN, padding: '11px 20px', borderRadius: 10, border: '1px solid #d6e7e3', background: '#fff', color: '#5c7a76', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}
-        >
-          Cancel
-        </button>
-        <button
-          onClick={onSaveClinical}
-          disabled={saving}
-          style={{
-            ...TOUCH_BTN, padding: '11px 22px', borderRadius: 10, border: 0, background: '#0e756c', color: '#fff',
-            fontWeight: 700, fontSize: 14, cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1,
-          }}
-        >
-          {saving ? 'Saving…' : 'Save'}
-        </button>
-      </div>
+      {readOnly ? (
+        <div style={{ display: 'flex', gap: 12, marginTop: 20, justifyContent: 'flex-end' }}>
+          <button
+            onClick={onGoBack}
+            style={{ ...TOUCH_BTN, padding: '11px 20px', borderRadius: 10, border: '1px solid #d6e7e3', background: '#fff', color: '#5c7a76', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}
+          >
+            Back
+          </button>
+          <button
+            onClick={onCreateNewVisit}
+            style={{
+              ...TOUCH_BTN, padding: '11px 22px', borderRadius: 10, border: 0, background: '#12a094', color: '#fff',
+              fontWeight: 700, fontSize: 14, cursor: 'pointer',
+            }}
+          >
+            Create New Visit
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: 12, marginTop: 20, justifyContent: 'flex-end' }}>
+          <button
+            onClick={onGoBack}
+            style={{ ...TOUCH_BTN, padding: '11px 20px', borderRadius: 10, border: '1px solid #d6e7e3', background: '#fff', color: '#5c7a76', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onSaveClinical}
+            disabled={saving}
+            style={{
+              ...TOUCH_BTN, padding: '11px 22px', borderRadius: 10, border: 0, background: '#0e756c', color: '#fff',
+              fontWeight: 700, fontSize: 14, cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1,
+            }}
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      )}
 
       {detail && (
         <div
