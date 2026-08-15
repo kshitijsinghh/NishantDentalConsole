@@ -1,5 +1,4 @@
 import { useState } from 'react';
-
 import { TOUCH_BTN } from '../styles';
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -7,6 +6,7 @@ function ymd(dt) { return dt.getFullYear() + '-' + pad2(dt.getMonth() + 1) + '-'
 function parseYmd(s) { const a = s.split('-').map(Number); return new Date(a[0], a[1] - 1, a[2]); }
 function addDays(s, n) { const dt = parseYmd(s); dt.setDate(dt.getDate() + n); return ymd(dt); }
 function todayStr() { return new Date().toISOString().slice(0, 10); }
+
 function fmtDateShort(d) {
   if (!d) return '—';
   try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }); }
@@ -53,7 +53,7 @@ export default function Dashboard({
   }
 
   const rangeLabel = (dateFrom || dateTo)
-    ? (fmtDateShort(dateFrom) + ' – ' + fmtDateShort(dateTo || dateFrom))
+    ? (fmtDateShort(dateFrom) + '  –  ' + fmtDateShort(dateTo || dateFrom))
     : 'All time';
 
   const cm = calMonth.split('-').map(Number);
@@ -78,7 +78,6 @@ export default function Dashboard({
     cells.push({ key: ds, blank: false, label: String(d), date: ds, bg, col, fw, border });
   }
   while (cells.length % 7 !== 0) cells.push({ key: 'e' + cells.length, blank: true });
-
   const calWeeks = [];
   for (let i = 0; i < cells.length; i += 7) calWeeks.push(cells.slice(i, i + 7));
 
@@ -114,6 +113,7 @@ export default function Dashboard({
               <path d="M21 12a9 9 0 1 1-2.64-6.36M21 4v5h-5" />
             </svg>
           </button>
+
           {showRange && (
             <div
               style={{
@@ -179,13 +179,13 @@ export default function Dashboard({
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 14, marginBottom: 22 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 12, marginBottom: 22 }}>
         {stats.map((st) => (
-          <div key={st.label} className={st.desktopOnly ? 'stat-desktop-only' : ''} style={{ background: '#fff', border: '1px solid #dfece9', borderRadius: 16, padding: '18px 20px' }}>
-            <span style={{ display: 'block', fontSize: 12.5, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: '#8aa8a3' }}>
+          <div key={st.label} style={{ background: '#fff', border: '1px solid #dfece9', borderRadius: 15, padding: '14px 16px' }}>
+            <span style={{ display: 'block', fontSize: 11.5, fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase', color: '#8aa8a3', lineHeight: 1.25 }}>
               {st.label}
             </span>
-            <span style={{ display: 'block', fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 32, color: st.color, marginTop: 4 }}>
+            <span style={{ display: 'block', fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 27, color: st.color, marginTop: 2 }}>
               {st.value}
             </span>
           </div>
@@ -202,7 +202,7 @@ export default function Dashboard({
           <h2 style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 19, color: '#0e3b39' }}>Visit records</h2>
           <input
             className="fld" value={q} onChange={(e) => onSetQ(e.target.value)} placeholder="Search by name, mobile or ID…"
-            style={{ minHeight: 44, flex: '0 1 320px', minWidth: 200, padding: '10px 14px', border: '1px solid #d6e7e3', borderRadius: 10, fontSize: 15, background: '#f7fbfa' }}
+            style={{ minHeight: 44, flex: '0 1 320px', minWidth: 200, padding: '10px 14px', border: '1px solid #d6e7e3', borderRadius: 10, fontSize: 14.5, background: '#f7fbfa' }}
           />
         </div>
 
@@ -263,41 +263,40 @@ export default function Dashboard({
 
             <div className="card-view">
               {visitRows.map((v) => (
-                <div key={v.visitId} style={{ padding: '14px 18px', borderTop: '1px solid #eef4f3', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
-                    <div>
-                      <span style={{ fontWeight: 700, fontSize: 15, color: '#0e3b39' }}>{v.name}</span>
-                      <span style={{ color: '#98b0ab', fontSize: 13.5 }}> · {v.ageGender}</span>
-                    </div>
+                <button
+                  key={v.visitId}
+                  onClick={v.open}
+                  style={{
+                    textAlign: 'left', border: 0, borderTop: '1px solid #eef4f3',
+                    background: '#fff', padding: '16px 18px', cursor: 'pointer',
+                    display: 'flex', flexDirection: 'column', gap: 10, width: '100%',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                    <span style={{ fontWeight: 700, color: '#0e3b39', fontSize: 16 }}>{v.name}</span>
                     <span style={{ flexShrink: 0, display: 'inline-block', padding: '4px 11px', borderRadius: 100, fontSize: 12, fontWeight: 700, background: v.payBg, color: v.payInk }}>
                       {v.payLabel}
                     </span>
                   </div>
-                  <div style={{ fontFamily: 'ui-monospace,monospace', fontSize: 12.5, color: '#0e756c', fontWeight: 600 }}>
-                    {v.visitId} · {v.dateLabel}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', columnGap: 14, rowGap: 4, fontSize: 13, color: '#5c7a76' }}>
+                    <span style={{ fontFamily: 'ui-monospace,monospace', color: '#0e756c', fontWeight: 600 }}>{v.visitId}</span>
+                    <span>{v.dateLabel}</span>
+                    <span>{v.ageGender}</span>
                   </div>
-                  <div style={{ fontSize: 13.5, color: '#5c7a76' }}>{v.mobile}</div>
-                  <div style={{ fontSize: 13.5, color: '#5c7a76' }}>{v.treatmentLabel}</div>
-                  <button
-                    onClick={v.open}
-                    className="action-btn"
-                    style={{
-                      ...TOUCH_BTN, marginTop: 6, alignSelf: 'stretch', padding: '10px 14px', borderRadius: 9,
-                      border: '1px solid #cfe3df', background: '#f2f9f8', color: '#0e756c', fontWeight: 700,
-                      fontSize: 13.5, cursor: 'pointer', gap: 7,
-                    }}
-                  >
-                    {v.actionLabel}
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M5 12h14M13 6l6 6-6 6" />
-                    </svg>
-                  </button>
-                </div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                    <span style={{ fontSize: 13.5, color: '#33534f' }}>{v.treatmentLabel}</span>
+                    <span style={{ color: '#0e756c', fontWeight: 700, fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      {v.actionLabel}
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M5 12h14M13 6l6 6-6 6" />
+                      </svg>
+                    </span>
+                  </div>
+                </button>
               ))}
             </div>
           </>
         )}
-
         {noVisits && (
           <div style={{ padding: '54px 20px', textAlign: 'center', color: '#8aa8a3' }}>
             <p style={{ fontSize: 16, fontWeight: 600, color: '#5c7a76' }}>No records yet.</p>
