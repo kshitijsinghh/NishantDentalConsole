@@ -34,6 +34,7 @@ function inr(n) {
 }
 function fmtTime(t) {
   if (!t) return '—';
+  if (/AM|PM/i.test(t)) return t;
   const [h, m] = t.split(':').map(Number);
   const ampm = h >= 12 ? 'PM' : 'AM';
   const hr = h % 12 || 12;
@@ -41,7 +42,7 @@ function fmtTime(t) {
 }
 function blankClinical() {
   return {
-    patientType: '', chiefComplaint: '', chiefDescription: '', treatmentGroup: '', treatment: '', toothNumber: '', treatmentOther: '',
+    patientType: '', medicalHistory: '', chiefComplaint: '', chiefDescription: '', treatmentGroup: '', treatment: '', advisedTreatment: '', toothNumber: '', treatmentOther: '', advisedTreatmentOther: '',
     treatmentCost: '', amountPaid: '', balanceDue: '', paymentMode: '',
     treatmentStage: '', googleReviewTaken: '', nextAppointment: '', nextAppointmentTime: '', comments: '',
   };
@@ -67,6 +68,7 @@ export default function App({ user, onLogout }) {
   const [dateFrom, setDateFrom] = useState(firstOfMonth());
   const [dateTo, setDateTo] = useState(today());
   const [apptDate, setApptDate] = useState(today());
+  const [showApptCal, setShowApptCal] = useState(false);
 
   const [form, setForm] = useState({ mobile: '', name: '', age: '', gender: '', date: today() });
   const [lookupState, setLookupState] = useState('');
@@ -442,13 +444,16 @@ export default function App({ user, onLogout }) {
     { label: 'Pending amount', value: inr(pendingAmount), color: '#ef5a3c' },
   ];
 
-  // Appointments: filter by selected date
+  // Appointments: collect all dates with appointments + filter by selected date
   const appts = [];
+  const apptDatesMap = {};
   for (const pid of db.order) {
     const p = db.patients[pid];
     for (const v of p.visits) {
       const na = v.clinical && v.clinical.nextAppointment;
-      if (na && na === apptDate) {
+      if (!na) continue;
+      apptDatesMap[na] = (apptDatesMap[na] || 0) + 1;
+      if (na === apptDate) {
         const trr = v.clinical ? (/Other/.test(v.clinical.treatment) && v.clinical.treatmentOther ? v.clinical.treatmentOther : v.clinical.treatment) : '';
         const nat = (v.clinical && v.clinical.nextAppointmentTime) || '';
         appts.push({
@@ -618,6 +623,8 @@ export default function App({ user, onLogout }) {
             appts={appts} hasAppts={appts.length > 0} noAppts={appts.length === 0}
             apptDate={apptDate} onSetApptDate={setApptDate}
             onApptToday={() => setApptDate(today())} apptDateLabel={apptDateLabel}
+            apptDatesMap={apptDatesMap}
+            showCal={showApptCal} onSetShowCal={setShowApptCal}
           />
         )}
 
@@ -655,6 +662,7 @@ export default function App({ user, onLogout }) {
             cur={cur} hasHistory={history.length > 0}
             cform={cform} onSetField={(k, v) => setCform((f) => ({ ...f, [k]: v }))}
             showTreatmentOther={/Other/.test(cform.treatment)}
+            showAdvisedTreatmentOther={/Other/.test(cform.advisedTreatment)}
             prevPending={prevPending} prevPendingLabel={inr(prevPending)}
             amountToCollect={num(cform.treatmentCost) + prevPending}
             amountToCollectLabel={inr(num(cform.treatmentCost) + prevPending)}
@@ -676,7 +684,7 @@ export default function App({ user, onLogout }) {
         )}
       </main>
 
-      {(view === 'dashboard' || view === 'appointments' || view === 'patients') && (
+      {(view === 'dashboard' || view === 'appointments' || view === 'patients') && !(view === 'appointments' && showApptCal) && (
         <button
           onClick={goIntake}
           title="New visit"
