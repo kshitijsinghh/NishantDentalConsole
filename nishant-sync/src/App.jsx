@@ -6,15 +6,13 @@ import Clinical from './views/Clinical';
 import Appointments from './views/Appointments';
 import Patients from './views/Patients';
 import PatientDetail from './views/PatientDetail';
-import { fetchList, saveIntake, saveClinical, uploadQr, getCachedList, fetchOrg, getRxTemplateUrl, generatePrescriptionPdf } from './api';
+import { fetchList, saveIntake, saveClinical, uploadQr, getCachedList } from './api';
 
 function today() {
-  const d = new Date();
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  return new Date().toISOString().slice(0, 10);
 }
 function firstOfMonth() {
-  const d = new Date();
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-01';
+  return new Date().toISOString().slice(0, 8) + '01';
 }
 function normMobile(m) {
   return (m || '').replace(/\D/g, '');
@@ -36,7 +34,6 @@ function inr(n) {
 }
 function fmtTime(t) {
   if (!t) return '—';
-  if (/AM|PM/i.test(t)) return t;
   const [h, m] = t.split(':').map(Number);
   const ampm = h >= 12 ? 'PM' : 'AM';
   const hr = h % 12 || 12;
@@ -44,30 +41,10 @@ function fmtTime(t) {
 }
 function blankClinical() {
   return {
-    chiefComplaint: [], chiefDescription: '', patientProblem: '', medicalHistory: '',
-    toothNumber: [], treatmentGroup: [], treatment: [], treatmentOther: '',
-    advisedTreatment: [], medicines: [], documents: [], paySplits: [],
-    labName: '', labToothNumber: '', labDescription: '',
-    treatmentCost: '', amountPaid: '', balanceDue: '', paymentMode: '', paymentStatus: '',
+    patientType: '', chiefComplaint: '', chiefDescription: '', treatmentGroup: '', treatment: '', toothNumber: '', treatmentOther: '',
+    treatmentCost: '', amountPaid: '', balanceDue: '', paymentMode: '',
     treatmentStage: '', googleReviewTaken: '', nextAppointment: '', nextAppointmentTime: '', comments: '',
   };
-}
-function tryParseJson(v) {
-  if (typeof v === 'string' && v.startsWith('[')) {
-    try { const p = JSON.parse(v); if (Array.isArray(p)) return p; } catch {}
-  }
-  return v;
-}
-function normalizeClinical(c) {
-  const out = { ...blankClinical(), ...c };
-  ['chiefComplaint', 'treatmentGroup', 'treatment', 'advisedTreatment', 'toothNumber'].forEach(k => {
-    let v = tryParseJson(out[k]);
-    out[k] = Array.isArray(v) ? v : (v ? [v] : []);
-  });
-  out.medicines = Array.isArray(out.medicines) ? out.medicines : tryParseJson(out.medicines) || [];
-  out.paySplits = Array.isArray(out.paySplits) ? out.paySplits : tryParseJson(out.paySplits) || [];
-  out.documents = Array.isArray(out.documents) ? out.documents : tryParseJson(out.documents) || [];
-  return out;
 }
 function findAllByMobile(db, mobile) {
   const mm = normMobile(mobile);
@@ -90,15 +67,12 @@ export default function App({ user, onLogout }) {
   const [dateFrom, setDateFrom] = useState(firstOfMonth());
   const [dateTo, setDateTo] = useState(today());
   const [apptDate, setApptDate] = useState(today());
-  const [showApptCal, setShowApptCal] = useState(false);
 
   const [form, setForm] = useState({ mobile: '', name: '', age: '', gender: '', date: today() });
   const [lookupState, setLookupState] = useState('');
   const [existingPatientId, setExistingPatientId] = useState('');
   const [mobilePatients, setMobilePatients] = useState([]);
   const [addAnother, setAddAnother] = useState(false);
-  const [intakeMode, setIntakeMode] = useState('new');
-  const [intakeSearch, setIntakeSearch] = useState('');
   const [intakeError, setIntakeError] = useState('');
   const [savingIntake, setSavingIntake] = useState(false);
 
@@ -111,11 +85,9 @@ export default function App({ user, onLogout }) {
   const [clinicalError, setClinicalError] = useState('');
   const [showQr, setShowQr] = useState(false);
   const [clinicalReadOnly, setClinicalReadOnly] = useState(false);
-  const [org, setOrg] = useState(null);
-  const [rxTemplateUrl, setRxTemplateUrl] = useState(null);
 
   function applySnapshot(res) {
-    setDbState({ patients: res.patients, order: res.order, seq: res.seq, upiQr: res.upiQr, labNames: res.labNames || [] });
+    setDbState({ patients: res.patients, order: res.order, seq: res.seq, upiQr: res.upiQr });
   }
 
   async function loadList(isRefresh) {
@@ -140,12 +112,6 @@ export default function App({ user, onLogout }) {
     } else {
       loadList(false);
     }
-    fetchOrg().then(o => {
-      if (o) setOrg(o);
-      if (o?.rxTemplateKey && !o.rxTemplateKey.endsWith('.docx')) {
-        getRxTemplateUrl().then(u => { if (u) setRxTemplateUrl(u); });
-      }
-    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -185,8 +151,6 @@ export default function App({ user, onLogout }) {
     setMobilePatients([]);
     setAddAnother(false);
     setIntakeError('');
-    setIntakeMode('new');
-    setIntakeSearch('');
   }
   function goPatients() {
     pushView('patients');
@@ -237,40 +201,6 @@ export default function App({ user, onLogout }) {
     if (p) {
       setExistingPatientId(p.patientId);
       setForm((f) => ({ ...f, name: p.name, age: p.age, gender: p.gender }));
-    }
-  }
-
-  async function startVisitForExisting(pid) {
-    const p = db.patients[pid];
-    if (!p) return;
-    const intakeData = { mobile: p.mobile, name: p.name, age: p.age, gender: p.gender, date: today() };
-    const optNo = p.visits.length + 1;
-    const optVid = pid + '_' + optNo;
-    const optVisit = { visitId: optVid, no: optNo, date: today(), done: false, clinical: null, createdAt: new Date().toISOString() };
-    const optDb = { ...db, patients: { ...db.patients } };
-    optDb.patients[pid] = { ...p, visits: [...p.visits, optVisit] };
-    setDbState(optDb);
-    setCurPatientId(pid);
-    setCurVisitId(optVid);
-    setCform(blankClinical());
-    setSavedFlash(false);
-    setClinicalError('');
-    setClinicalReadOnly(false);
-    setForm({ mobile: '', name: '', age: '', gender: '', date: today() });
-    setLookupState('');
-    setExistingPatientId('');
-    setMobilePatients([]);
-    setAddAnother(false);
-    setIntakeMode('new');
-    setIntakeSearch('');
-    replaceView('clinical');
-    try {
-      const res = await saveIntake(intakeData);
-      applySnapshot(res);
-      if (res.patientId !== pid) setCurPatientId(res.patientId);
-      if (res.visitId !== optVid) setCurVisitId(res.visitId);
-    } catch {
-      setClinicalError('Visit creation failed — please go back and try again.');
     }
   }
 
@@ -333,10 +263,10 @@ export default function App({ user, onLogout }) {
 
   function openVisit(pid, visitId, readOnly) {
     const p = db.patients[pid];
+    const v = p && p.visits.find((x) => x.visitId === visitId);
     setCurPatientId(pid);
     setCurVisitId(visitId);
-    const v = p && p.visits.find((x) => x.visitId === visitId);
-    const base = v && v.clinical ? normalizeClinical(v.clinical) : blankClinical();
+    const base = v && v.clinical ? { ...blankClinical(), ...v.clinical } : blankClinical();
     if (!base.patientType && p) {
       base.patientType = Number(p.age) <= 12 ? 'Kid' : 'Adult';
     }
@@ -360,42 +290,11 @@ export default function App({ user, onLogout }) {
     pushView('intake');
   }
 
-  async function onSaveAndNext() {
-    setSavingClinical(true);
-    setClinicalError('');
-    try {
-      const saveForm = { ...cform };
-      if (!saveForm.labToothNumber && saveForm.toothNumber && (saveForm.labName || saveForm.labDescription)) {
-        saveForm.labToothNumber = Array.isArray(saveForm.toothNumber) ? saveForm.toothNumber.join(', ') : saveForm.toothNumber;
-      }
-      const remaining = num(saveForm.treatmentCost) + prevPending - num(saveForm.amountPaid);
-      saveForm.paymentStatus = remaining <= 0 ? 'Fully Paid' : (num(saveForm.amountPaid) > 0 ? 'Partially paid' : 'Not paid');
-      saveForm.balanceDue = String(Math.max(0, remaining));
-      // Strip base64 dataUrl — too large for Sheet cells (50K char limit); files go to S3 later
-      saveForm.documents = (saveForm.documents || []).map(({ dataUrl, ...rest }) => rest);
-      const res = await saveClinical({ patientId: curPatientId, visitId: curVisitId, cform: saveForm });
-      applySnapshot(res);
-    } catch {
-      setClinicalError('Auto-save failed — your data is still in the form.');
-    } finally {
-      setSavingClinical(false);
-    }
-  }
-
   async function onSaveClinical() {
     setSavingClinical(true);
     setClinicalError('');
     try {
-      const saveForm = { ...cform };
-      if (!saveForm.labToothNumber && saveForm.toothNumber && (saveForm.labName || saveForm.labDescription)) {
-        saveForm.labToothNumber = Array.isArray(saveForm.toothNumber) ? saveForm.toothNumber.join(', ') : saveForm.toothNumber;
-      }
-      const remaining = num(saveForm.treatmentCost) + prevPending - num(saveForm.amountPaid);
-      saveForm.paymentStatus = remaining <= 0 ? 'Fully Paid' : (num(saveForm.amountPaid) > 0 ? 'Partially paid' : 'Not paid');
-      saveForm.balanceDue = String(Math.max(0, remaining));
-      // Strip base64 dataUrl — too large for Sheet cells (50K char limit); files go to S3 later
-      saveForm.documents = (saveForm.documents || []).map(({ dataUrl, ...rest }) => rest);
-      const res = await saveClinical({ patientId: curPatientId, visitId: curVisitId, cform: saveForm });
+      const res = await saveClinical({ patientId: curPatientId, visitId: curVisitId, cform });
       applySnapshot(res);
       setSavedFlash(true);
       setTimeout(() => {
@@ -466,9 +365,7 @@ export default function App({ user, onLogout }) {
     const p = db.patients[pid];
     for (const v of p.visits) {
       const ps = (v.clinical && v.clinical.paymentStatus) || '';
-      const rawTr = v.clinical ? (Array.isArray(v.clinical.treatment) ? v.clinical.treatment : (v.clinical.treatment ? [v.clinical.treatment] : [])) : [];
-      const hasOther = rawTr.some(t => /Other/.test(t));
-      const tr = hasOther && v.clinical.treatmentOther ? [...rawTr.filter(t => !/Other/.test(t)), v.clinical.treatmentOther].join(', ') : rawTr.join(', ');
+      const tr = v.clinical ? (/Other/.test(v.clinical.treatment) && v.clinical.treatmentOther ? v.clinical.treatmentOther : v.clinical.treatment) : '';
       const payMap = { 'Fully Paid': ['#e3f5ec', '#12805a'], 'Partially paid': ['#fdf0dc', '#a9741a'], 'Not paid': ['#fdecea', '#c0392b'] };
       const pm = payMap[ps] || ['#eef4f3', '#8aa8a3'];
       rows.push({
@@ -506,19 +403,14 @@ export default function App({ user, onLogout }) {
     { label: 'Pending amount', value: inr(pendingAmount), color: '#ef5a3c' },
   ];
 
-  // Appointments: collect all dates with appointments + filter by selected date
+  // Appointments: filter by selected date
   const appts = [];
-  const apptDatesMap = {};
   for (const pid of db.order) {
     const p = db.patients[pid];
     for (const v of p.visits) {
       const na = v.clinical && v.clinical.nextAppointment;
-      if (!na) continue;
-      apptDatesMap[na] = (apptDatesMap[na] || 0) + 1;
-      if (na === apptDate) {
-        const rawTrr = v.clinical ? (Array.isArray(v.clinical.treatment) ? v.clinical.treatment : (v.clinical.treatment ? [v.clinical.treatment] : [])) : [];
-        const hasOtherA = rawTrr.some(t => /Other/.test(t));
-        const trr = hasOtherA && v.clinical.treatmentOther ? [...rawTrr.filter(t => !/Other/.test(t)), v.clinical.treatmentOther].join(', ') : rawTrr.join(', ');
+      if (na && na === apptDate) {
+        const trr = v.clinical ? (/Other/.test(v.clinical.treatment) && v.clinical.treatmentOther ? v.clinical.treatmentOther : v.clinical.treatment) : '';
         const nat = (v.clinical && v.clinical.nextAppointmentTime) || '';
         appts.push({
           date: na, time: nat, timeLabel: fmtTime(nat), name: p.name, mobile: p.mobile,
@@ -543,10 +435,6 @@ export default function App({ user, onLogout }) {
       if (bal < 0) bal = 0;
     });
     const lastVisit = sorted.length > 0 ? sorted[sorted.length - 1] : null;
-    const lastTs = p.visits.reduce((mx, v) => {
-      const t = Date.parse(v.createdAt) || 0;
-      return t > mx ? t : mx;
-    }, 0);
     let st;
     if (bal > 0 && totalP > 0) st = 'Partially paid';
     else if (bal > 0) st = 'Not paid';
@@ -556,7 +444,6 @@ export default function App({ user, onLogout }) {
       ageGender: (p.age || '?') + '/' + (p.gender || '—'),
       lastDate: lastVisit ? lastVisit.date : '',
       lastLabel: lastVisit ? fmtDate(lastVisit.date) : '—',
-      lastTimestamp: lastTs,
       visitCount: p.visits.length,
       outstanding: bal, status: st,
     };
@@ -568,27 +455,6 @@ export default function App({ user, onLogout }) {
   const previewPatientId = matchedPatient ? matchedPatient.patientId : 'P' + String(db.seq + 1).padStart(4, '0');
   const nextVisitNo = matchedPatient ? matchedPatient.visits.length + 1 : 1;
   const previewVisitId = previewPatientId + '_' + nextVisitNo;
-
-  const intakeSearchQ = intakeSearch.trim().toLowerCase();
-  const intakeResults = [];
-  if (intakeSearchQ) {
-    for (const pid of db.order) {
-      if (intakeResults.length >= 20) break;
-      const p = db.patients[pid];
-      if ((p.name + ' ' + p.mobile + ' ' + pid).toLowerCase().includes(intakeSearchQ)) {
-        const sorted = p.visits.slice().sort((a, b) => (a.no || 0) - (b.no || 0));
-        const lastVisit = sorted.length > 0 ? sorted[sorted.length - 1] : null;
-        intakeResults.push({
-          patientId: pid, name: p.name, mobile: p.mobile,
-          ageGender: (p.age || '?') + ' · ' + (p.gender || '—'),
-          initial: (p.name || '?')[0].toUpperCase(),
-          lastLabel: lastVisit ? fmtDate(lastVisit.date) : '—',
-          nextVisitNo: p.visits.length + 1,
-          open: () => startVisitForExisting(pid),
-        });
-      }
-    }
-  }
 
   const curP = db.patients[curPatientId];
   const curV = curP && curP.visits.find((x) => x.visitId === curVisitId);
@@ -605,28 +471,23 @@ export default function App({ user, onLogout }) {
     let runBal = 0;
     let lastReset = -1;
     sorted.forEach((v, i) => {
-      const isCur = v.visitId === curVisitId;
-      const cost = isCur ? num(cform.treatmentCost) : num(v.clinical && v.clinical.treatmentCost);
-      const paid = isCur ? num(cform.amountPaid) : num(v.clinical && v.clinical.amountPaid);
-      runBal += cost - paid;
+      runBal += num(v.clinical && v.clinical.treatmentCost) - num(v.clinical && v.clinical.amountPaid);
       if (runBal < 0) { runBal = 0; lastReset = i; }
     });
     pendingTotal = runBal;
     const rawPending = [];
     sorted.forEach((v, i) => {
-      const isCur = v.visitId === curVisitId;
-      const cost = isCur ? num(cform.treatmentCost) : num(v.clinical && v.clinical.treatmentCost);
-      const paid = isCur ? num(cform.amountPaid) : num(v.clinical && v.clinical.amountPaid);
+      const cost = num(v.clinical && v.clinical.treatmentCost);
+      const paid = num(v.clinical && v.clinical.amountPaid);
       const visitOwes = cost - paid;
-      const rawTrH = v.clinical ? (Array.isArray(v.clinical.treatment) ? v.clinical.treatment : (v.clinical.treatment ? [v.clinical.treatment] : [])) : [];
-      const hasOtherH = rawTrH.some(t => /Other/.test(t));
-      const trrH = hasOtherH && v.clinical && v.clinical.treatmentOther ? [...rawTrH.filter(t => !/Other/.test(t)), v.clinical.treatmentOther].join(', ') : rawTrH.join(', ');
+      const trr = v.clinical ? (/Other/.test(v.clinical.treatment) && v.clinical.treatmentOther ? v.clinical.treatmentOther : v.clinical.treatment) : '';
+      const isCur = v.visitId === curVisitId;
       if (i > lastReset && visitOwes > 0) {
         rawPending.push({ visitId: v.visitId, dateLabel: fmtDate(v.date), rawAmount: visitOwes, current: isCur });
       }
       const bal = num(v.clinical && v.clinical.balanceDue);
       history.push({
-        visitId: v.visitId, dateLabel: fmtDate(v.date), treatmentLabel: trrH || '—',
+        visitId: v.visitId, dateLabel: fmtDate(v.date), treatmentLabel: trr || '—',
         cost: cost ? inr(cost) : '—', balance: bal ? inr(bal) : '—',
         status: (v.clinical && v.clinical.paymentStatus) || '—', current: isCur, rowBg: isCur ? '#eef7f6' : '#fff',
       });
@@ -694,8 +555,6 @@ export default function App({ user, onLogout }) {
             appts={appts} hasAppts={appts.length > 0} noAppts={appts.length === 0}
             apptDate={apptDate} onSetApptDate={setApptDate}
             onApptToday={() => setApptDate(today())} apptDateLabel={apptDateLabel}
-            apptDatesMap={apptDatesMap}
-            showCal={showApptCal} onSetShowCal={setShowApptCal}
           />
         )}
 
@@ -710,11 +569,6 @@ export default function App({ user, onLogout }) {
           <PatientDetail
             patient={db.patients[detailPid]} patientId={detailPid}
             onGoBack={goBack}
-            clinicName={org?.clinicName} clinicAddress={org ? [org.clinicAddress, ...(org.contactNumbers || []).map(n => '+91 ' + n)].filter(Boolean).join(' · ') : ''}
-            doctorName={org?.doctorName} doctorQualification={org?.doctorQualification}
-            rxTemplateUrl={rxTemplateUrl}
-            hasDocxTemplate={!!org?.rxTemplateKey?.endsWith('.docx')}
-            hasReceiptTemplate={!!org?.receiptTemplateKey?.endsWith('.docx')}
           />
         )}
 
@@ -726,10 +580,6 @@ export default function App({ user, onLogout }) {
             mobilePatients={mobilePatients} addAnother={addAnother}
             onSelectPatient={onSelectPatient} onAddAnother={onAddAnother} onCancelAddAnother={onCancelAddAnother}
             intakeError={intakeError} onGoBack={goBack} onSaveIntake={onSaveIntake} saving={savingIntake}
-            intakeMode={intakeMode} onSetIntakeMode={setIntakeMode}
-            intakeSearch={intakeSearch} onSetIntakeSearch={setIntakeSearch}
-            intakeResults={intakeResults} hasIntakeResults={intakeResults.length > 0}
-            showIntakeEmpty={!!intakeSearchQ && intakeResults.length === 0}
           />
         )}
 
@@ -737,6 +587,7 @@ export default function App({ user, onLogout }) {
           <Clinical
             cur={cur} hasHistory={history.length > 0}
             cform={cform} onSetField={(k, v) => setCform((f) => ({ ...f, [k]: v }))}
+            showTreatmentOther={/Other/.test(cform.treatment)}
             prevPending={prevPending} prevPendingLabel={inr(prevPending)}
             amountToCollect={num(cform.treatmentCost) + prevPending}
             amountToCollectLabel={inr(num(cform.treatmentCost) + prevPending)}
@@ -748,24 +599,17 @@ export default function App({ user, onLogout }) {
             hasQr={!!db.upiQr} noQr={!db.upiQr} qrUrl={db.upiQr}
             qrUploadLabel={db.upiQr ? 'Replace scanner' : 'Upload scanner'} onUploadQr={onUploadQr}
             showQr={showQr} onOpenQr={() => setShowQr(true)} onCloseQr={() => setShowQr(false)}
-            savedFlash={savedFlash} onGoBack={goBack} onSaveClinical={onSaveClinical} onSaveAndNext={onSaveAndNext} saving={savingClinical}
+            savedFlash={savedFlash} onGoBack={goBack} onSaveClinical={onSaveClinical} saving={savingClinical}
             error={clinicalError}
             apptCountText={apptCountText} showApptCount={!!cform.nextAppointment}
             db={db} curPatientId={curPatientId}
-            labNames={db.labNames || []}
             readOnly={clinicalReadOnly}
             onCreateNewVisit={() => onCreateNewVisitFromAppt(curPatientId)}
-            clinicName={org?.clinicName} clinicAddress={org ? [org.clinicAddress, ...(org.contactNumbers || []).map(n => '+91 ' + n)].filter(Boolean).join(' · ') : ''}
-            doctorName={org?.doctorName} doctorQualification={org?.doctorQualification}
-            rxTemplateUrl={rxTemplateUrl}
-            hasDocxTemplate={!!org?.rxTemplateKey?.endsWith('.docx')}
-            hasReceiptTemplate={!!org?.receiptTemplateKey?.endsWith('.docx')}
-            onPaymentSaved={() => loadList(true)}
           />
         )}
       </main>
 
-      {(view === 'dashboard' || view === 'appointments' || view === 'patients') && !(view === 'appointments' && showApptCal) && (
+      {(view === 'dashboard' || view === 'appointments' || view === 'patients') && (
         <button
           onClick={goIntake}
           title="New visit"

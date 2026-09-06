@@ -127,7 +127,7 @@ export default function Header({ view, onGoDash, onGoAppts, onGoPatients, user, 
               display: 'block', fontSize: 9.5, letterSpacing: '.16em', textTransform: 'uppercase',
               color: '#7fd4c9', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
             }}>
-              Nishant Dental Clinic
+              Nishant
             </span>
           </span>
         </div>

@@ -70,13 +70,13 @@ export default function Login({ onAuth }) {
           fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 24,
           color: '#0e3b39', margin: '0 0 4px',
         }}>
-          PatientPad
+          Nishant Dental Clinic
         </h1>
         <p style={{
           fontSize: 12, letterSpacing: '.15em', textTransform: 'uppercase',
           color: '#5c7a76', fontWeight: 600, margin: '0 0 28px',
         }}>
-          Nishant Dental Clinic
+          Clinic Console
         </p>
 
         {checking ? (
