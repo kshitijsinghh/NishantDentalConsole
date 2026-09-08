@@ -6,6 +6,40 @@ import {
 import { TOUCH_BTN, FLUID_GRID_2COL } from '../styles';
 import { getUploadUrl, uploadToS3, getDocumentUrl, generatePrescriptionPdf, generateReceiptPdf, savePayment, getClinicId } from '../api';
 
+async function downloadAsPdf(url, filename) {
+  const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+    import('html2canvas'),
+    import('jspdf'),
+  ]);
+  const res = await fetch(url);
+  const htmlText = await res.text();
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'position:fixed;left:-10000px;top:0;width:800px;background:#fff;z-index:-1;';
+  const bodyMatch = htmlText.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+  const styleMatch = htmlText.match(/<style>([\s\S]*?)<\/style>/g);
+  let inner = bodyMatch ? bodyMatch[1] : htmlText;
+  inner = inner.replace(/<script[\s\S]*?<\/script>/gi, '');
+  inner = inner.replace(/<div id="print-btn"[\s\S]*?<\/div>/i, '');
+  if (styleMatch) wrapper.innerHTML = styleMatch.join('') + inner;
+  else wrapper.innerHTML = inner;
+  document.body.appendChild(wrapper);
+  await new Promise(r => setTimeout(r, 300));
+  const canvas = await html2canvas(wrapper, { scale: 2, useCORS: true, logging: false });
+  document.body.removeChild(wrapper);
+  const pdf = new jsPDF('p', 'mm', 'a4');
+  const pageW = pdf.internal.pageSize.getWidth();
+  const pageH = pdf.internal.pageSize.getHeight();
+  const imgW = pageW - 10;
+  const imgH = (canvas.height * imgW) / canvas.width;
+  let y = 0;
+  while (y < imgH) {
+    if (y > 0) pdf.addPage();
+    pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 5, -y + 5, imgW, imgH);
+    y += pageH - 10;
+  }
+  pdf.save(filename);
+}
+
 const fieldStyle = {
   width: '100%', minHeight: 44, padding: '12px 14px', border: '1px solid #d6e7e3', borderRadius: 10,
   fontSize: 15, background: '#f7fbfa',
@@ -254,13 +288,15 @@ function PrescriptionSheet({ rx, onClose, clinicName, clinicAddress, doctorName,
         <div id="rx-chrome" style={{ background: '#0e3b39', color: '#fff', padding: '14px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 16 }}>E-Prescription</span>
           <div style={{ display: 'flex', gap: 8 }}>
-            {hasDocxTemplate && docxUrl && docxFormat === 'docx' && (
-              <a href={docxUrl} target="_blank" rel="noopener noreferrer" style={{ padding: '8px 15px', borderRadius: 9, border: 0, background: '#12a094', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer', textDecoration: 'none' }}>Download</a>
+            {hasDocxTemplate && docxUrl && (
+              <button onClick={() => { const w = window.open(docxUrl + '#print', '_blank'); if (w) w.focus(); }} style={{ padding: '8px 15px', borderRadius: 9, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print</button>
             )}
-            {hasDocxTemplate && docxUrl && docxFormat !== 'docx' && (
-              <button onClick={() => window.open(docxUrl + '#print', '_blank')} style={{ padding: '8px 15px', borderRadius: 9, border: 0, background: '#12a094', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print / Save PDF</button>
+            {hasDocxTemplate && docxUrl && (
+              <button onClick={() => downloadAsPdf(docxUrl, `Prescription_${rx.visitId || 'doc'}.pdf`)} style={{ padding: '8px 15px', borderRadius: 9, border: 0, background: '#12a094', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Download</button>
             )}
-            {!hasDocxTemplate && <button onClick={() => window.print()} style={{ padding: '8px 15px', borderRadius: 9, border: 0, background: '#12a094', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print / Save PDF</button>}
+            {!hasDocxTemplate && (
+              <button onClick={() => window.print()} style={{ padding: '8px 15px', borderRadius: 9, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print</button>
+            )}
             <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 8, border: 0, background: 'rgba(255,255,255,.15)', color: '#fff', fontSize: 15, cursor: 'pointer' }}>✕</button>
           </div>
         </div>
@@ -436,19 +472,15 @@ function ReceiptSheet({ receipt, onClose, clinicName, clinicAddress, doctorName,
         <div id="rx-chrome" style={{ background: '#0e3b39', color: '#fff', padding: '14px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 16 }}>Payment Receipt</span>
           <div style={{ display: 'flex', gap: 8 }}>
-            {!paymentSaved && (
-              <button onClick={handleSavePayment} disabled={paymentSaving} style={{ padding: '8px 15px', borderRadius: 9, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', color: '#fff', fontWeight: 700, fontSize: 13, cursor: paymentSaving ? 'not-allowed' : 'pointer', opacity: paymentSaving ? 0.6 : 1 }}>
-                {paymentSaving ? 'Saving...' : 'Save Payment'}
-              </button>
+            {hasReceiptTemplate && docxUrl && (
+              <button onClick={() => { const w = window.open(docxUrl + '#print', '_blank'); if (w) w.focus(); }} style={{ padding: '8px 15px', borderRadius: 9, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print</button>
             )}
-            {paymentSaved && <span style={{ padding: '8px 12px', fontSize: 13, color: '#a8f0d0', fontWeight: 600 }}>Saved</span>}
-            {hasReceiptTemplate && docxUrl && docxFormat !== 'docx' && (
-              <button onClick={() => window.open(docxUrl + '#print', '_blank')} style={{ padding: '8px 15px', borderRadius: 9, border: 0, background: '#12a094', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print / Save PDF</button>
+            {hasReceiptTemplate && docxUrl && (
+              <button onClick={() => downloadAsPdf(docxUrl, `Receipt_${receipt.visitId || 'doc'}.pdf`)} style={{ padding: '8px 15px', borderRadius: 9, border: 0, background: '#12a094', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Download</button>
             )}
-            {hasReceiptTemplate && docxUrl && docxFormat === 'docx' && (
-              <a href={docxUrl} target="_blank" rel="noopener noreferrer" style={{ padding: '8px 15px', borderRadius: 9, border: 0, background: '#12a094', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer', textDecoration: 'none' }}>Download</a>
+            {!hasReceiptTemplate && (
+              <button onClick={() => window.print()} style={{ padding: '8px 15px', borderRadius: 9, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print</button>
             )}
-            {!hasReceiptTemplate && <button onClick={() => window.print()} style={{ padding: '8px 15px', borderRadius: 9, border: 0, background: '#12a094', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print / Save PDF</button>}
             <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 8, border: 0, background: 'rgba(255,255,255,.15)', color: '#fff', fontSize: 15, cursor: 'pointer' }}>✕</button>
           </div>
         </div>
@@ -562,6 +594,9 @@ export default function Clinical({
   const [uploadRowCounter, setUploadRowCounter] = useState(1);
   const uploadRowsRef = useRef([{ rowId: 0, kind: 'X-Ray' }]);
   const [, forceUpdate] = useState(0);
+  const fileInputRef = useRef(null);
+  const pendingRowRef = useRef(null);
+  const [uploadingRowIds, setUploadingRowIds] = useState([]);
 
   const medicines = cform.medicines || [];
   const paySplits = cform.paySplits || [];
@@ -609,13 +644,23 @@ export default function Clinical({
     onSetField('documents', documents.map(d => d.rowId === rowId ? { ...d, kind } : d));
     forceUpdate(c => c + 1);
   }
+  function triggerUpload(rowId, kind) {
+    pendingRowRef.current = { rowId, kind };
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
+  }
   function onUploadDocs(e) {
     const input = e && e.target;
     const files = Array.from((input && input.files) || []);
     if (!files.length) return;
-    const kind = (input && input.getAttribute('data-kind')) || 'Other';
-    const rowId = input && input.getAttribute('data-row') ? Number(input.getAttribute('data-row')) : null;
+    const pending = pendingRowRef.current;
+    const kind = pending ? pending.kind : 'Other';
+    const rowId = pending ? pending.rowId : null;
     const visitId = cur.visitId;
+
+    setUploadingRowIds(prev => rowId !== null ? [...prev, rowId] : prev);
 
     const uploadOne = async (file) => {
       try {
@@ -638,6 +683,8 @@ export default function Clinical({
       if (!good.length) return;
       const existing = rowId !== null ? documents.filter(d => d.rowId !== rowId) : documents;
       onSetField('documents', [...existing, ...good]);
+    }).finally(() => {
+      setUploadingRowIds(prev => prev.filter(id => id !== rowId));
       try { if (input) input.value = ''; } catch (err) {}
     });
   }
@@ -1087,21 +1134,27 @@ export default function Clinical({
           <h3 style={{ ...h3Style, margin: '24px 0 6px' }}>Documents</h3>
           <p style={{ fontSize: 13, color: '#98b0ab', marginBottom: 12 }}>Attach X-rays, prescriptions or medical reports for this visit.</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <input ref={fileInputRef} type="file" accept="image/*,application/pdf" multiple onChange={onUploadDocs} style={{ display: 'none' }} />
+            {uploadingRowIds.length > 0 && <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>}
             {uploadRows.map((ur) => {
               const rowDocs = documents.filter(d => d.rowId === ur.rowId);
               const hasFiles = rowDocs.length > 0;
+              const isUploading = uploadingRowIds.includes(ur.rowId);
               const fileLabel = hasFiles ? (rowDocs.length === 1 ? rowDocs[0].name : rowDocs[0].name.split('.')[0] + ' + ' + (rowDocs.length - 1) + ' more') : '';
               return (
                 <div key={ur.rowId} style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
                   <select value={ur.kind} onChange={(e) => setUploadRowKind(ur.rowId, e.target.value)} style={{ flex: '0 1 190px', padding: '11px 13px', border: '1px solid #d6e7e3', borderRadius: 10, fontSize: 14.5, background: '#f7fbfa' }}>
                     {DOC_KINDS.map((dk) => <option key={dk} value={dk}>{dk}</option>)}
                   </select>
-                  <label style={{ padding: '11px 18px', borderRadius: 10, border: '1px solid #cfe3df', background: '#f2f9f8', color: '#0e756c', fontWeight: 700, fontSize: 14, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
-                    {hasFiles ? 'Replace file' : 'Upload file'}
-                    <input type="file" accept="image/*,application/pdf" multiple data-kind={ur.kind} data-row={ur.rowId} onChange={onUploadDocs} style={{ display: 'none' }} />
-                  </label>
-                  {hasFiles && (
+                  <button onClick={() => triggerUpload(ur.rowId, ur.kind)} disabled={isUploading} style={{ padding: '11px 18px', borderRadius: 10, border: '1px solid #cfe3df', background: isUploading ? '#e2efec' : '#f2f9f8', color: '#0e756c', fontWeight: 700, fontSize: 14, cursor: isUploading ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 8, opacity: isUploading ? 0.7 : 1 }}>
+                    {isUploading ? (
+                      <div style={{ width: 16, height: 16, border: '2.5px solid #cfe3df', borderTopColor: '#0e756c', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                    ) : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+                    )}
+                    {isUploading ? 'Uploading...' : (hasFiles ? 'Replace file' : 'Upload file')}
+                  </button>
+                  {hasFiles && !isUploading && (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, maxWidth: 240, padding: '8px 12px', borderRadius: 9, background: '#e6f4f2', color: '#0e756c', fontSize: 13, fontWeight: 600 }}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M20 6L9 17l-5-5"/></svg>
                       <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{fileLabel}</span>
