@@ -3,7 +3,7 @@ import { fetchList, portalCheckin, savePatientProblem, getDocumentUrl, fetchOrg,
 import { getFirebaseAuth, RecaptchaVerifier, signInWithPhoneNumber, signOut as firebaseSignOut } from './firebase';
 
 /* ─── helpers ─── */
-async function downloadAsPdf(url, filename) {
+async function renderUrlToPdf(url) {
   const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
     import('html2canvas'),
     import('jspdf'),
@@ -34,7 +34,27 @@ async function downloadAsPdf(url, filename) {
     pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 5, -y + 5, imgW, imgH);
     y += pageH - 10;
   }
+  return pdf;
+}
+
+async function downloadAsPdf(url, filename) {
+  const pdf = await renderUrlToPdf(url);
   pdf.save(filename);
+}
+
+// Print via a real PDF (MFP printers reliably print PDFs, not browser HTML jobs).
+async function printAsPdf(url, filename) {
+  const win = window.open('', '_blank');
+  try {
+    const pdf = await renderUrlToPdf(url);
+    pdf.autoPrint();
+    const blobUrl = pdf.output('bloburl');
+    if (win) win.location.href = blobUrl;
+    else window.open(blobUrl, '_blank');
+  } catch (e) {
+    if (win) { try { win.close(); } catch (_) {} }
+    window.open(url + '#print', '_blank');
+  }
 }
 
 // Capture an already-rendered on-screen element to a PDF (inline HTML rx/receipt).
@@ -1918,7 +1938,7 @@ export default function PortalApp() {
                   <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 16 }}>{title}</span>
                   <div style={{ display: 'flex', gap: 8 }}>
                     {useDocxView && docxContent?.url && (
-                      <button onClick={() => { const w = window.open(docxContent.url + '#print', '_blank'); if (w) w.focus(); }} style={{ padding: '8px 14px', borderRadius: 9, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print</button>
+                      <button onClick={() => printAsPdf(docxContent.url, `${isRx ? 'Prescription' : 'Receipt'}_${viewDoc.visitId || 'doc'}.pdf`)} style={{ padding: '8px 14px', borderRadius: 9, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print</button>
                     )}
                     {useDocxView && docxContent?.url && (
                       <button onClick={() => downloadAsPdf(docxContent.url, `${isRx ? 'Prescription' : 'Receipt'}_${viewDoc.visitId || 'doc'}.pdf`)} style={{ padding: '8px 14px', borderRadius: 9, border: 0, background: '#12a094', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Download</button>

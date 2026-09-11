@@ -6,7 +6,8 @@ import {
 import { TOUCH_BTN, FLUID_GRID_2COL } from '../styles';
 import { getUploadUrl, uploadToS3, getDocumentUrl, generatePrescriptionPdf, generateReceiptPdf, savePayment, getClinicId } from '../api';
 
-async function downloadAsPdf(url, filename) {
+// Rasterize a server-generated HTML document (fetched from its URL) into a jsPDF instance.
+async function renderUrlToPdf(url) {
   const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
     import('html2canvas'),
     import('jspdf'),
@@ -37,7 +38,31 @@ async function downloadAsPdf(url, filename) {
     pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 5, -y + 5, imgW, imgH);
     y += pageH - 10;
   }
+  return pdf;
+}
+
+async function downloadAsPdf(url, filename) {
+  const pdf = await renderUrlToPdf(url);
   pdf.save(filename);
+}
+
+// Print a server-generated document by first converting it to a real PDF and
+// printing THAT — networked/MFP printers reliably print PDFs but often error on
+// browser-rendered HTML print jobs. Mirrors the (working) Download path.
+async function printAsPdf(url, filename) {
+  // Open the tab synchronously inside the click gesture so it isn't popup-blocked.
+  const win = window.open('', '_blank');
+  try {
+    const pdf = await renderUrlToPdf(url);
+    pdf.autoPrint();
+    const blobUrl = pdf.output('bloburl');
+    if (win) win.location.href = blobUrl;
+    else window.open(blobUrl, '_blank');
+  } catch (e) {
+    if (win) { try { win.close(); } catch (_) {} }
+    // Last-resort fallback: open the original doc and let the browser print it.
+    window.open(url + '#print', '_blank');
+  }
 }
 
 // Capture an already-rendered on-screen element to a PDF (used when there is no
@@ -313,7 +338,7 @@ function PrescriptionSheet({ rx, onClose, clinicName, clinicAddress, doctorName,
           <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 16 }}>E-Prescription</span>
           <div style={{ display: 'flex', gap: 8 }}>
             {hasDocxTemplate && docxUrl && (
-              <button onClick={() => { const w = window.open(docxUrl + '#print', '_blank'); if (w) w.focus(); }} style={{ padding: '8px 15px', borderRadius: 9, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print</button>
+              <button onClick={() => printAsPdf(docxUrl, `Prescription_${rx.visitId || 'doc'}.pdf`)} style={{ padding: '8px 15px', borderRadius: 9, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print</button>
             )}
             {hasDocxTemplate && docxUrl && (
               <button onClick={() => downloadAsPdf(docxUrl, `Prescription_${rx.visitId || 'doc'}.pdf`)} style={{ padding: '8px 15px', borderRadius: 9, border: 0, background: '#12a094', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Download</button>
@@ -500,7 +525,7 @@ function ReceiptSheet({ receipt, onClose, clinicName, clinicAddress, doctorName,
           <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 16 }}>Payment Receipt</span>
           <div style={{ display: 'flex', gap: 8 }}>
             {hasReceiptTemplate && docxUrl && (
-              <button onClick={() => { const w = window.open(docxUrl + '#print', '_blank'); if (w) w.focus(); }} style={{ padding: '8px 15px', borderRadius: 9, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print</button>
+              <button onClick={() => printAsPdf(docxUrl, `Receipt_${receipt.visitId || 'doc'}.pdf`)} style={{ padding: '8px 15px', borderRadius: 9, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print</button>
             )}
             {hasReceiptTemplate && docxUrl && (
               <button onClick={() => downloadAsPdf(docxUrl, `Receipt_${receipt.visitId || 'doc'}.pdf`)} style={{ padding: '8px 15px', borderRadius: 9, border: 0, background: '#12a094', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Download</button>
