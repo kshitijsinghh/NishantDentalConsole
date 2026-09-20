@@ -38,12 +38,19 @@ async function renderUrlToPdf(url) {
 }
 
 async function downloadAsPdf(url, filename) {
-  const pdf = await renderUrlToPdf(url);
-  pdf.save(filename);
+  try {
+    const pdf = await renderUrlToPdf(url);
+    pdf.save(filename);
+  } catch (e) {
+    // Never fail silently — a dead-looking button is worse than a fallback.
+    console.error('PDF download failed:', e);
+    window.open(url, '_blank');
+    alert('Could not build the PDF automatically, so the document was opened in a new tab.\nUse your browser\u2019s Print \u2192 "Save as PDF" from there.');
+  }
 }
 
 // Print via a real PDF (MFP printers reliably print PDFs, not browser HTML jobs).
-async function printAsPdf(url, filename) {
+async function printAsPdf(url) {
   const win = window.open('', '_blank');
   try {
     const pdf = await renderUrlToPdf(url);
@@ -145,13 +152,14 @@ function buildRx(cf, meta, clinicName) {
   return {
     dateLabel: meta.dateLabel, name: meta.name, ageGender: meta.ageGender, mobile: meta.mobile,
     patientId: meta.patientId, visitId: meta.visitId,
-    medicalHistory: cf.medicalHistory || '—',
-    chiefComplaint: listLabel(cf.chiefComplaint, '—'),
-    description: cf.chiefDescription || '—',
-    treatmentGroup: listLabel(cf.treatmentGroup, '—'),
-    treatment: trLabel(cf) || '—',
-    advisedTreatment: listLabel(cf.advisedTreatment, '—'),
-    toothNumber: listLabel(cf.toothNumber, '—'),
+    // Empty fields stay '' so the prescription omits them entirely.
+    medicalHistory: cf.medicalHistory || '',
+    chiefComplaint: listLabel(cf.chiefComplaint, ''),
+    description: cf.chiefDescription || '',
+    treatmentGroup: listLabel(cf.treatmentGroup, ''),
+    treatment: trLabel(cf) || '',
+    advisedTreatment: listLabel(cf.advisedTreatment, ''),
+    toothNumber: listLabel(cf.toothNumber, ''),
     meds: (cf.medicines || []).filter(m => m.name).map((m, i) => ({
       sn: i + 1, name: m.name, unit: m.unit, dose: medDoseText(m),
       food: m.food, duration: m.duration ? (m.duration + ' days') : '—', total: medTotal(m),
@@ -1938,7 +1946,7 @@ export default function PortalApp() {
                   <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 16 }}>{title}</span>
                   <div style={{ display: 'flex', gap: 8 }}>
                     {useDocxView && docxContent?.url && (
-                      <button onClick={() => printAsPdf(docxContent.url, `${isRx ? 'Prescription' : 'Receipt'}_${viewDoc.visitId || 'doc'}.pdf`)} style={{ padding: '8px 14px', borderRadius: 9, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print</button>
+                      <button onClick={() => printAsPdf(docxContent.url)} style={{ padding: '8px 14px', borderRadius: 9, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print</button>
                     )}
                     {useDocxView && docxContent?.url && (
                       <button onClick={() => downloadAsPdf(docxContent.url, `${isRx ? 'Prescription' : 'Receipt'}_${viewDoc.visitId || 'doc'}.pdf`)} style={{ padding: '8px 14px', borderRadius: 9, border: 0, background: '#12a094', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Download</button>
@@ -1986,15 +1994,15 @@ export default function PortalApp() {
                       <span style={{ color: '#5c7a76' }}>Patient: <strong style={{ color: '#0e3b39' }}>{rx.name}</strong></span>
                       <span style={{ color: '#5c7a76' }}>Age / Gender: <strong style={{ color: '#0e3b39' }}>{rx.ageGender}</strong></span>
                       <span style={{ color: '#5c7a76' }}>Mobile: <strong style={{ color: '#0e3b39' }}>{rx.mobile}</strong></span>
-                      <span style={{ color: '#5c7a76' }}>Medical history: <strong style={{ color: '#0e3b39' }}>{rx.medicalHistory}</strong></span>
+                      {!!rx.medicalHistory && <span style={{ color: '#5c7a76' }}>Medical history: <strong style={{ color: '#0e3b39' }}>{rx.medicalHistory}</strong></span>}
                     </div>
                     <div style={{ marginTop: 14, padding: '13px 15px', borderRadius: 12, background: '#f7fbfa', border: '1px solid #e2efec', display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: '8px 20px', fontSize: 13 }}>
-                      <span style={{ color: '#5c7a76' }}>Chief complaint: <strong style={{ color: '#0e3b39' }}>{rx.chiefComplaint}</strong></span>
-                      <span style={{ color: '#5c7a76' }}>Description: <strong style={{ color: '#0e3b39' }}>{rx.description}</strong></span>
-                      <span style={{ color: '#5c7a76' }}>Treatment group: <strong style={{ color: '#0e3b39' }}>{rx.treatmentGroup}</strong></span>
-                      <span style={{ color: '#5c7a76' }}>Tooth number: <strong style={{ color: '#0e3b39' }}>{rx.toothNumber}</strong></span>
-                      <span style={{ color: '#5c7a76' }}>Current treatment: <strong style={{ color: '#0e3b39' }}>{rx.treatment}</strong></span>
-                      <span style={{ color: '#5c7a76' }}>Advised treatment: <strong style={{ color: '#0e3b39' }}>{rx.advisedTreatment}</strong></span>
+                      {!!rx.chiefComplaint && <span style={{ color: '#5c7a76' }}>Chief complaint: <strong style={{ color: '#0e3b39' }}>{rx.chiefComplaint}</strong></span>}
+                      {!!rx.description && <span style={{ color: '#5c7a76' }}>Description: <strong style={{ color: '#0e3b39' }}>{rx.description}</strong></span>}
+                      {!!rx.treatmentGroup && <span style={{ color: '#5c7a76' }}>Treatment group: <strong style={{ color: '#0e3b39' }}>{rx.treatmentGroup}</strong></span>}
+                      {!!rx.toothNumber && <span style={{ color: '#5c7a76' }}>Tooth number: <strong style={{ color: '#0e3b39' }}>{rx.toothNumber}</strong></span>}
+                      {!!rx.treatment && <span style={{ color: '#5c7a76' }}>Current treatment: <strong style={{ color: '#0e3b39' }}>{rx.treatment}</strong></span>}
+                      {!!rx.advisedTreatment && <span style={{ color: '#5c7a76' }}>Advised treatment: <strong style={{ color: '#0e3b39' }}>{rx.advisedTreatment}</strong></span>}
                     </div>
                     <p style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 15, color: '#0e3b39', margin: '18px 0 8px' }}>{'℞'} Medicines</p>
                     {rx.noMeds && <p style={{ fontSize: 13, color: '#98b0ab' }}>No medicine prescribed.</p>}

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import {
   CHIEF_COMPLAINTS, TREATMENT_GROUPS, TREATMENTS, TOOTH_NUMBERS, TOOTH_NUMBERS_KID, PAYMENT_MODES, YES_NO, TREATMENT_STAGES,
-  MEDICINE_FORMS, FOOD_OPTIONS, DOC_KINDS, SPLIT_CATEGORIES,
+  MEDICINE_FORMS, FOOD_OPTIONS, DOC_KINDS, SPLIT_CATEGORIES, FDI_QUADRANTS, FDI_PRIMARY_QUADRANTS,
 } from '../options';
 import { TOUCH_BTN, FLUID_GRID_2COL } from '../styles';
 import { getUploadUrl, uploadToS3, getDocumentUrl, generatePrescriptionPdf, generateReceiptPdf, savePayment, getClinicId } from '../api';
@@ -41,30 +41,6 @@ async function renderUrlToPdf(url) {
   return pdf;
 }
 
-async function downloadAsPdf(url, filename) {
-  const pdf = await renderUrlToPdf(url);
-  pdf.save(filename);
-}
-
-// Print a server-generated document by first converting it to a real PDF and
-// printing THAT — networked/MFP printers reliably print PDFs but often error on
-// browser-rendered HTML print jobs. Mirrors the (working) Download path.
-async function printAsPdf(url, filename) {
-  // Open the tab synchronously inside the click gesture so it isn't popup-blocked.
-  const win = window.open('', '_blank');
-  try {
-    const pdf = await renderUrlToPdf(url);
-    pdf.autoPrint();
-    const blobUrl = pdf.output('bloburl');
-    if (win) win.location.href = blobUrl;
-    else window.open(blobUrl, '_blank');
-  } catch (e) {
-    if (win) { try { win.close(); } catch (_) {} }
-    // Last-resort fallback: open the original doc and let the browser print it.
-    window.open(url + '#print', '_blank');
-  }
-}
-
 // Capture an already-rendered on-screen element to a PDF (used when there is no
 // server-generated docx/pdf URL — the inline HTML prescription/receipt).
 async function downloadElementAsPdf(elementId, filename) {
@@ -87,6 +63,41 @@ async function downloadElementAsPdf(elementId, filename) {
     y += pageH - 10;
   }
   pdf.save(filename);
+}
+
+async function downloadAsPdf(url, filename) {
+  try {
+    const pdf = await renderUrlToPdf(url);
+    pdf.save(filename);
+  } catch (e) {
+    // Never fail silently — a dead-looking button is worse than a fallback.
+    console.error('PDF download failed:', e);
+    window.open(url, '_blank');
+    alert('Could not build the PDF automatically, so the document was opened in a new tab.\nUse your browser’s Print → "Save as PDF" from there.');
+  }
+}
+
+// Print a server-generated document by converting it to a real PDF first — networked
+// MFP printers reliably print PDFs but often error on browser HTML print jobs.
+async function printAsPdf(url) {
+  // Open the tab synchronously inside the click gesture so it isn't popup-blocked.
+  const win = window.open('', '_blank');
+  try {
+    const pdf = await renderUrlToPdf(url);
+    pdf.autoPrint();
+    const blobUrl = pdf.output('bloburl');
+    if (win) win.location.href = blobUrl;
+    else window.open(blobUrl, '_blank');
+  } catch (e) {
+    if (win) { try { win.close(); } catch (_) {} }
+    window.open(url + '#print', '_blank');
+  }
+}
+
+// Capitalise the first letter of each word, leaving the rest of the word as typed
+// ("zerodol p" -> "Zerodol P", "500mg" stays "500mg", "ZERODOL" stays "ZERODOL").
+function titleCase(s) {
+  return String(s == null ? '' : s).replace(/\b[a-z]/g, (c) => c.toUpperCase());
 }
 
 const fieldStyle = {
@@ -188,6 +199,130 @@ function MultiSelect({ value, options, onChange, placeholder, disabled, allowOth
   );
 }
 
+/* ── Tooth picker modal: quadrant-grouped FDI chart over a dimmed backdrop ── */
+function ToothPickerModal({ title, selected, onToggle, onClose }) {
+  const [showPrimary, setShowPrimary] = useState(false);
+  const quadrant = (q, keyPrefix) => (
+    <div key={keyPrefix + q.label}>
+      <span style={{ display: 'block', fontSize: 9.5, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: '#a9c1bc', paddingBottom: 5, textAlign: q.align === 'flex-end' ? 'right' : 'left' }}>{q.label}</span>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: q.align }}>
+        {q.list.map((t) => {
+          const on = selected.includes(t);
+          return (
+            <button key={t} type="button" onClick={() => onToggle(t)} style={{ width: 30, padding: '6px 0', borderRadius: 7, cursor: 'pointer', fontSize: 12, fontWeight: 700, border: '1px solid ' + (on ? '#0e756c' : '#dfece9'), background: on ? '#0e756c' : '#fff', color: on ? '#fff' : '#5c7a76' }}>{t}</button>
+          );
+        })}
+      </div>
+    </div>
+  );
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 70, background: 'rgba(14,59,57,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(360px,92vw)', maxHeight: '82vh', overflow: 'auto', background: '#fff', border: '1px solid #dfece9', borderRadius: 16, boxShadow: '0 26px 60px -18px rgba(14,59,57,.5)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '13px 16px', borderBottom: '1px solid #eef4f3', position: 'sticky', top: 0, background: '#fff' }}>
+          <span style={{ minWidth: 0 }}>
+            <span style={{ display: 'block', fontSize: 10, fontWeight: 700, letterSpacing: '.07em', textTransform: 'uppercase', color: '#a9c1bc' }}>Select teeth</span>
+            <span style={{ display: 'block', fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 15, color: '#0e3b39', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</span>
+          </span>
+          <button type="button" onClick={onClose} title="Close" style={{ flexShrink: 0, width: 30, height: 30, borderRadius: 8, border: '1px solid #e2efec', background: '#f7fbfa', color: '#5c7a76', fontSize: 14, cursor: 'pointer', lineHeight: 1 }}>✕</button>
+        </div>
+        <div style={{ padding: '14px 16px 16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 12px' }}>
+            {FDI_QUADRANTS.map((q) => quadrant(q, 'p'))}
+          </div>
+          <button type="button" onClick={() => setShowPrimary((v) => !v)} style={{ marginTop: 12, border: 0, background: 'none', padding: 0, color: '#0e756c', fontWeight: 700, fontSize: 12.5, cursor: 'pointer' }}>
+            {showPrimary ? 'Hide primary (milk) teeth' : 'Show primary (milk) teeth'}
+          </button>
+          {showPrimary && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 12px', marginTop: 10, paddingTop: 12, borderTop: '1px solid #eef4f3' }}>
+              {FDI_PRIMARY_QUADRANTS.map((q) => quadrant(q, 'k'))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── "Tooth number — per treatment": one row per selected treatment ── */
+function ToothTagBlock({ cform, listField, mapField, emptyCopy, onChange, readOnly }) {
+  const [openFor, setOpenFor] = useState('');
+  const list = asList(cform[listField]);
+  const map = cform[mapField] || {};
+
+  const nameOf = (t) => (/Other/.test(t) && cform.treatmentOther ? cform.treatmentOther : t);
+
+  function toggleTooth(tr, tooth) {
+    const cur = asList(map[tr]);
+    const next = { ...map, [tr]: cur.includes(tooth) ? cur.filter((x) => x !== tooth) : [...cur, tooth].sort() };
+    onChange(next);
+  }
+  function applyToAll(sourceTr) {
+    const teeth = asList(map[sourceTr]);
+    const next = { ...map };
+    list.forEach((t) => { next[t] = [...teeth]; });
+    onChange(next);
+  }
+
+  if (!list.length) {
+    return <p style={{ fontSize: 13.5, color: '#98b0ab', background: '#f7fbfa', border: '1px dashed #d6e7e3', borderRadius: 12, padding: '13px 15px' }}>{emptyCopy}</p>;
+  }
+
+  return (
+    <>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {list.map((tr, trIndex) => {
+          const teeth = asList(map[tr]);
+          const btnLabel = teeth.length ? (teeth.length === 1 ? '1 tooth' : teeth.length + ' teeth') : 'Tag teeth';
+          const canApplyAll = trIndex === 0 && teeth.length > 0 && list.length > 1;
+          return (
+            <div key={tr} style={{ border: '1px solid #e2efec', borderRadius: 13, background: '#fbfdfd', padding: '12px 14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 700, color: '#0e3b39', fontSize: 14.5 }}>{nameOf(tr)}</span>
+                <button type="button" disabled={readOnly} onClick={() => setOpenFor(tr)} style={{ padding: '8px 13px', border: '1px solid #cfe3df', borderRadius: 9, fontSize: 13.5, background: '#fff', cursor: readOnly ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: '#0e756c', fontWeight: 700 }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+                  {btnLabel}
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8aa8a3" strokeWidth="2.4" strokeLinecap="round"><path d="M6 9l6 6 6-6" /></svg>
+                </button>
+              </div>
+              {teeth.length > 0 ? (
+                <>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
+                    {teeth.map((t) => (
+                      <span key={t} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 100, background: '#e6f4f2', color: '#0e756c', fontWeight: 700, fontSize: 12.5 }}>
+                        {t}
+                        <button type="button" disabled={readOnly} onClick={() => toggleTooth(tr, t)} title="Remove" style={{ border: 0, background: 'none', padding: 0, color: '#0e756c', cursor: readOnly ? 'default' : 'pointer', fontSize: 12, lineHeight: 1 }}>✕</button>
+                      </span>
+                    ))}
+                  </div>
+                  {canApplyAll && !readOnly && (
+                    <button type="button" onClick={() => applyToAll(tr)} style={{ marginTop: 9, border: 0, background: 'none', padding: 0, color: '#0e756c', fontWeight: 700, fontSize: 12.5, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 4h10a2 2 0 0 1 2 2v10" /><rect x="4" y="8" width="12" height="12" rx="2" /></svg>
+                      Apply these teeth to all treatments
+                    </button>
+                  )}
+                </>
+              ) : (
+                <p style={{ fontSize: 12.5, color: '#a9c1bc', marginTop: 8 }}>No teeth tagged yet.</p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <p style={{ fontSize: 12.5, color: '#98b0ab', marginTop: 8 }}>
+        Prints on the prescription as <strong style={{ color: '#5c7a76' }}>{teethMapLabel(cform, listField, mapField)}</strong>
+      </p>
+      {openFor && (
+        <ToothPickerModal
+          title={nameOf(openFor)}
+          selected={asList(map[openFor])}
+          onToggle={(t) => toggleTooth(openFor, t)}
+          onClose={() => setOpenFor('')}
+        />
+      )}
+    </>
+  );
+}
+
 function TimePicker12h({ value, onChange, disabled }) {
   let hr = '', min = '', ap = 'AM';
   if (value) {
@@ -225,12 +360,46 @@ function listLabel(v, fallback) {
   if (Array.isArray(v)) return v.length ? v.join(', ') : (fallback || '—');
   return v || fallback || '—';
 }
+// Like listLabel but yields '' (never '—') when empty — used by the prescription,
+// which omits a field entirely rather than printing a placeholder dash.
+function listPlain(v) {
+  if (Array.isArray(v)) return v.join(', ');
+  return v || '';
+}
 function trLabel(c) {
   if (!c) return '';
   const t = Array.isArray(c.treatment) ? c.treatment : (c.treatment ? [c.treatment] : []);
   const hasOther = t.some(x => /Other/.test(x));
   if (hasOther && c.treatmentOther) return [...t.filter(x => !/Other/.test(x)), c.treatmentOther].join(', ');
   return t.join(', ');
+}
+
+/* ── Per-treatment tooth tagging ── */
+function asList(x) { return Array.isArray(x) ? x : (x ? [x] : []); }
+
+// "RCT: 11, 12 · Scaling & Polishing: 21" — a treatment with no teeth tagged
+// prints as just its name. "Other" prints the treatmentOther text instead.
+function teethMapLabel(c, listField, mapField) {
+  if (!c) return '';
+  const map = c[mapField] || {};
+  return asList(c[listField]).map((t) => {
+    const name = /Other/.test(t) && c.treatmentOther ? c.treatmentOther : t;
+    const teeth = asList(map[t]);
+    return teeth.length ? name + ': ' + teeth.join(', ') : name;
+  }).join(' · ');
+}
+function trTeethLabel(c) { return teethMapLabel(c, 'treatment', 'treatmentTeeth'); }
+function advTeethLabel(c) { return teethMapLabel(c, 'advisedTreatment', 'advisedTeeth'); }
+
+// toothNumber is no longer edited directly — it is the sorted union of every
+// tooth tagged under treatmentTeeth, which keeps Lab Requirements auto-population
+// working off a single field as before.
+function deriveToothNumber(treatment, treatmentTeeth) {
+  const union = [];
+  asList(treatment).forEach((t) => {
+    asList((treatmentTeeth || {})[t]).forEach((x) => { if (!union.includes(x)) union.push(x); });
+  });
+  return union.sort();
 }
 
 /* ── Medicine helpers ── */
@@ -254,17 +423,25 @@ function buildRx(cf, meta) {
   return {
     dateLabel: meta.dateLabel, name: meta.name, ageGender: meta.ageGender, mobile: meta.mobile,
     patientId: meta.patientId, visitId: meta.visitId,
-    medicalHistory: cf.medicalHistory || '—',
-    chiefComplaint: listLabel(cf.chiefComplaint, '—'),
-    description: cf.chiefDescription || '—',
-    treatmentGroup: listLabel(cf.treatmentGroup, '—'),
-    treatment: trLabel(cf) || '—',
-    advisedTreatment: listLabel(cf.advisedTreatment, '—'),
-    toothNumber: listLabel(cf.toothNumber, '—'),
+    // Empty fields are sent as '' (not '—') so the prescription can omit them entirely.
+    medicalHistory: cf.medicalHistory || '',
+    chiefComplaint: listPlain(cf.chiefComplaint),
+    description: cf.chiefDescription || '',
+    diagnosis: cf.diagnosis || '',
+    investigation: cf.investigation || '',
+    treatmentGroup: listPlain(cf.treatmentGroup),
+    // Prefer the per-treatment tooth labels ("RCT: 11, 12 · Scaling: 21"); fall
+    // back to the plain treatment list for records saved before tooth tagging.
+    treatment: trTeethLabel(cf) || trLabel(cf) || '',
+    advisedTreatment: advTeethLabel(cf) || listPlain(cf.advisedTreatment),
+    toothNumber: listPlain(cf.toothNumber),
     meds: (cf.medicines || []).filter(m => m.name).map((m, i) => ({
       sn: i + 1, name: m.name, unit: m.unit, dose: medDoseText(m),
       food: m.food, duration: m.duration ? (m.duration + ' days') : '—', total: medTotal(m),
+      remarks: m.remarks || '',
     })),
+    // Drives the optional Remarks column — hidden entirely when no medicine has any.
+    anyRemarks: (cf.medicines || []).some(m => m.name && m.remarks),
     hasMeds: (cf.medicines || []).some(m => m.name),
     noMeds: !(cf.medicines || []).some(m => m.name),
     comments: cf.comments || '',
@@ -319,11 +496,12 @@ function PrescriptionSheet({ rx, onClose, clinicName, clinicAddress, doctorName,
       patientName: rx.name, age_sex: rx.ageGender, mobile: rx.mobile,
       date: rx.dateLabel, visitId: rx.visitId,
       chiefComplaint: rx.chiefComplaint, description: rx.description,
+      diagnosis: rx.diagnosis, investigation: rx.investigation,
       treatmentGroup: rx.treatmentGroup, toothNumber: rx.toothNumber,
       treatment: rx.treatment, advisedTreatment: rx.advisedTreatment,
       medicalHistory: rx.medicalHistory,
       comments: rx.comments,
-      medicines: (rx.meds || []).map(m => ({ name: m.name, unit: m.unit, dose: m.dose, food: m.food, duration: m.duration })),
+      medicines: (rx.meds || []).map(m => ({ name: m.name, unit: m.unit, dose: m.dose, food: m.food, duration: m.duration, remarks: m.remarks })),
     };
     generatePrescriptionPdf(visitData)
       .then(res => { setDocxUrl(res.url); setDocxFormat(res.format); })
@@ -338,7 +516,7 @@ function PrescriptionSheet({ rx, onClose, clinicName, clinicAddress, doctorName,
           <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 16 }}>E-Prescription</span>
           <div style={{ display: 'flex', gap: 8 }}>
             {hasDocxTemplate && docxUrl && (
-              <button onClick={() => printAsPdf(docxUrl, `Prescription_${rx.visitId || 'doc'}.pdf`)} style={{ padding: '8px 15px', borderRadius: 9, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print</button>
+              <button onClick={() => printAsPdf(docxUrl)} style={{ padding: '8px 15px', borderRadius: 9, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print</button>
             )}
             {hasDocxTemplate && docxUrl && (
               <button onClick={() => downloadAsPdf(docxUrl, `Prescription_${rx.visitId || 'doc'}.pdf`)} style={{ padding: '8px 15px', borderRadius: 9, border: 0, background: '#12a094', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Download</button>
@@ -416,15 +594,17 @@ function PrescriptionSheet({ rx, onClose, clinicName, clinicAddress, doctorName,
                   <span style={{ color: '#5c7a76' }}>Patient: <strong style={{ color: '#0e3b39' }}>{rx.name}</strong></span>
                   <span style={{ color: '#5c7a76' }}>Age / Gender: <strong style={{ color: '#0e3b39' }}>{rx.ageGender}</strong></span>
                   <span style={{ color: '#5c7a76' }}>Mobile: <strong style={{ color: '#0e3b39' }}>{rx.mobile}</strong></span>
-                  <span style={{ color: '#5c7a76' }}>Medical history: <strong style={{ color: '#0e3b39' }}>{rx.medicalHistory}</strong></span>
+                  {!!rx.medicalHistory && <span style={{ color: '#5c7a76' }}>Medical history: <strong style={{ color: '#0e3b39' }}>{rx.medicalHistory}</strong></span>}
                 </div>
                 <div style={{ marginTop: 18, padding: '14px 16px', borderRadius: 12, background: '#f7fbfa', border: '1px solid #e2efec', display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: '10px 22px', fontSize: 13.5 }}>
-                  <span style={{ color: '#5c7a76' }}>Chief complaint: <strong style={{ color: '#0e3b39' }}>{rx.chiefComplaint}</strong></span>
-                  <span style={{ color: '#5c7a76' }}>Description: <strong style={{ color: '#0e3b39' }}>{rx.description}</strong></span>
-                  <span style={{ color: '#5c7a76' }}>Treatment group: <strong style={{ color: '#0e3b39' }}>{rx.treatmentGroup}</strong></span>
-                  <span style={{ color: '#5c7a76' }}>Tooth number: <strong style={{ color: '#0e3b39' }}>{rx.toothNumber}</strong></span>
-                  <span style={{ color: '#5c7a76' }}>Current treatment: <strong style={{ color: '#0e3b39' }}>{rx.treatment}</strong></span>
-                  <span style={{ color: '#5c7a76' }}>Advised treatment: <strong style={{ color: '#0e3b39' }}>{rx.advisedTreatment}</strong></span>
+                  {!!rx.chiefComplaint && <span style={{ color: '#5c7a76' }}>Chief complaint: <strong style={{ color: '#0e3b39' }}>{rx.chiefComplaint}</strong></span>}
+                  {!!rx.description && <span style={{ color: '#5c7a76' }}>Description: <strong style={{ color: '#0e3b39' }}>{rx.description}</strong></span>}
+                  {!!rx.diagnosis && <span style={{ color: '#5c7a76' }}>Diagnosis: <strong style={{ color: '#0e3b39' }}>{rx.diagnosis}</strong></span>}
+                  {!!rx.investigation && <span style={{ color: '#5c7a76' }}>Investigation: <strong style={{ color: '#0e3b39' }}>{rx.investigation}</strong></span>}
+                  {!!rx.treatmentGroup && <span style={{ color: '#5c7a76' }}>Treatment group: <strong style={{ color: '#0e3b39' }}>{rx.treatmentGroup}</strong></span>}
+                  {!!rx.toothNumber && <span style={{ color: '#5c7a76' }}>Tooth number: <strong style={{ color: '#0e3b39' }}>{rx.toothNumber}</strong></span>}
+                  {!!rx.treatment && <span style={{ color: '#5c7a76' }}>Current treatment: <strong style={{ color: '#0e3b39' }}>{rx.treatment}</strong></span>}
+                  {!!rx.advisedTreatment && <span style={{ color: '#5c7a76' }}>Advised treatment: <strong style={{ color: '#0e3b39' }}>{rx.advisedTreatment}</strong></span>}
                 </div>
               </>
             )}
@@ -434,6 +614,8 @@ function PrescriptionSheet({ rx, onClose, clinicName, clinicAddress, doctorName,
                   {rx.medicalHistory && rx.medicalHistory !== '—' && <span>Medical Hx: <strong>{rx.medicalHistory}</strong></span>}
                   {rx.chiefComplaint && rx.chiefComplaint !== '—' && <span>Chief Complaint: <strong>{rx.chiefComplaint}</strong></span>}
                   {rx.description && rx.description !== '—' && <span>Description: <strong>{rx.description}</strong></span>}
+                  {rx.diagnosis && rx.diagnosis !== '—' && <span>Diagnosis: <strong>{rx.diagnosis}</strong></span>}
+                  {rx.investigation && rx.investigation !== '—' && <span>Investigation: <strong>{rx.investigation}</strong></span>}
                   {rx.treatmentGroup && rx.treatmentGroup !== '—' && <span>Treatment Group: <strong>{rx.treatmentGroup}</strong></span>}
                   {rx.toothNumber && rx.toothNumber !== '—' && <span>Tooth #: <strong>{rx.toothNumber}</strong></span>}
                   {rx.treatment && rx.treatment !== '—' && <span>Treatment: <strong>{rx.treatment}</strong></span>}
@@ -452,6 +634,7 @@ function PrescriptionSheet({ rx, onClose, clinicName, clinicAddress, doctorName,
                     <th style={{ padding: hasImageTemplate ? '4px 4px' : '8px 6px', fontWeight: 700 }}>Dosage</th>
                     <th style={{ padding: hasImageTemplate ? '4px 4px' : '8px 6px', fontWeight: 700 }}>Food</th>
                     <th style={{ padding: hasImageTemplate ? '4px 4px' : '8px 6px', fontWeight: 700 }}>Duration</th>
+                    {rx.anyRemarks && <th style={{ padding: hasImageTemplate ? '4px 4px' : '8px 6px', fontWeight: 700 }}>Remarks</th>}
                   </tr></thead>
                   <tbody>
                     {rx.meds.map((rm) => (
@@ -461,6 +644,7 @@ function PrescriptionSheet({ rx, onClose, clinicName, clinicAddress, doctorName,
                         <td style={{ padding: hasImageTemplate ? '4px 4px' : '9px 6px', color: '#33534f' }}>{rm.dose} <span style={{ color: '#98b0ab' }}>{rm.total}</span></td>
                         <td style={{ padding: hasImageTemplate ? '4px 4px' : '9px 6px', color: '#33534f' }}>{rm.food}</td>
                         <td style={{ padding: hasImageTemplate ? '4px 4px' : '9px 6px', color: '#33534f' }}>{rm.duration}</td>
+                        {rx.anyRemarks && <td style={{ padding: hasImageTemplate ? '4px 4px' : '9px 6px', color: '#33534f' }}>{rm.remarks}</td>}
                       </tr>
                     ))}
                   </tbody>
@@ -525,7 +709,7 @@ function ReceiptSheet({ receipt, onClose, clinicName, clinicAddress, doctorName,
           <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 16 }}>Payment Receipt</span>
           <div style={{ display: 'flex', gap: 8 }}>
             {hasReceiptTemplate && docxUrl && (
-              <button onClick={() => printAsPdf(docxUrl, `Receipt_${receipt.visitId || 'doc'}.pdf`)} style={{ padding: '8px 15px', borderRadius: 9, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print</button>
+              <button onClick={() => printAsPdf(docxUrl)} style={{ padding: '8px 15px', borderRadius: 9, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print</button>
             )}
             {hasReceiptTemplate && docxUrl && (
               <button onClick={() => downloadAsPdf(docxUrl, `Receipt_${receipt.visitId || 'doc'}.pdf`)} style={{ padding: '8px 15px', borderRadius: 9, border: 0, background: '#12a094', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Download</button>
@@ -675,12 +859,19 @@ export default function Clinical({
   /* ── Medicine handlers ── */
   function addMedicine() { onSetField('medicines', [...medicines, { name: '', unit: 'Tablet', morning: false, afternoon: false, evening: false, night: false, food: 'After Food', duration: '' }]); }
   function removeMedicine(i) { onSetField('medicines', medicines.filter((_, x) => x !== i)); }
-  function setMed(i, key, val) { onSetField('medicines', medicines.map((m, x) => x === i ? { ...m, [key]: val } : m)); }
+  function setMed(i, key, val) {
+    const v = key === 'name' ? titleCase(val) : val;
+    onSetField('medicines', medicines.map((m, x) => x === i ? { ...m, [key]: v } : m));
+  }
 
   /* ── Split handlers ── */
   function addSplit() { onSetField('paySplits', [...paySplits, { category: 'Treatment', custom: '', amount: '' }]); setRcError(''); }
   function removeSplit(i) { onSetField('paySplits', paySplits.filter((_, x) => x !== i)); setRcError(''); }
-  function setSplit(i, key, val) { onSetField('paySplits', paySplits.map((sp, x) => x === i ? { ...sp, [key]: val } : sp)); setRcError(''); }
+  function setSplit(i, key, val) {
+    const v = key === 'custom' ? titleCase(val) : val;
+    onSetField('paySplits', paySplits.map((sp, x) => x === i ? { ...sp, [key]: v } : sp));
+    setRcError('');
+  }
 
   /* ── Document upload handlers ── */
   function addUploadRow() {
@@ -773,12 +964,14 @@ export default function Clinical({
           { k: 'Medical history', v: dash(nc.medicalHistory) },
           { k: 'Chief complaint', v: listLabel(nc.chiefComplaint, '—') },
           { k: 'Description', v: dash(nc.chiefDescription) },
+          { k: 'Diagnosis', v: dash(nc.diagnosis) },
+          { k: 'Advised treatment', v: advTeethLabel(nc) || listLabel(nc.advisedTreatment, '—') },
+          { k: 'Investigation', v: dash(nc.investigation) },
           { k: 'Treatment group', v: listLabel(nc.treatmentGroup, '—') },
-          { k: 'Current treatment', v: trLabel(nc) || '—' },
-          { k: 'Advised treatment', v: listLabel(nc.advisedTreatment, '—') },
+          { k: 'Current treatment', v: trTeethLabel(nc) || trLabel(nc) || '—' },
           { k: 'Tooth number', v: listLabel(nc.toothNumber, '—') },
           { k: 'Medicines', v: (nc.medicines || []).filter(m => m.name).length
-            ? (nc.medicines || []).filter(m => m.name).map(m => m.name + ' — ' + medDoseText(m) + ', ' + m.food + (m.duration ? ', ' + m.duration + ' days' : '')).join(' · ')
+            ? (nc.medicines || []).filter(m => m.name).map(m => m.name + ' — ' + medDoseText(m) + ', ' + m.food + (m.duration ? ', ' + m.duration + ' days' : '') + (m.remarks ? ' (' + m.remarks + ')' : '')).join(' · ')
             : '—' },
           { k: 'Treatment cost', v: nc.treatmentCost ? inr(num(nc.treatmentCost)) : '—' },
           { k: 'Amount paid', v: nc.amountPaid ? inr(num(nc.amountPaid)) : '—' },
@@ -800,6 +993,10 @@ export default function Clinical({
   }
 
   const toothOptions = cform.patientType === 'Kid' ? TOOTH_NUMBERS_KID : TOOTH_NUMBERS;
+  // Lab tooth numbers are auto-filled from cform.toothNumber, which the tooth
+  // picker now writes in FDI notation ("11"), while toothOptions uses "1-1".
+  // Union them so an auto-filled value is never silently dropped from the chips.
+  const labToothOptions = [...toothOptions, ...asList(cform.toothNumber).filter((t) => !toothOptions.includes(t))];
 
   return (
     <div style={{ maxWidth: 840, margin: '0 auto' }}>
@@ -912,13 +1109,39 @@ export default function Clinical({
               <label style={labelStyle}>Description</label>
               <input className="fld" value={cform.chiefDescription || ''} onChange={(e) => onSetField('chiefDescription', e.target.value)} placeholder="Notes on the chief complaint" style={{ ...fieldStyle, ...(readOnly ? roStyle : {}) }} disabled={readOnly} />
             </div>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label style={labelStyle}>Diagnosis</label>
+              <input className="fld" value={cform.diagnosis || ''} onChange={(e) => onSetField('diagnosis', e.target.value)} placeholder="Clinical diagnosis" style={{ ...fieldStyle, ...(readOnly ? roStyle : {}) }} disabled={readOnly} />
+            </div>
+            <div>
+              <label style={labelStyle}>Advised treatment</label>
+              <MultiSelect value={cform.advisedTreatment} options={TREATMENTS} onChange={(v) => onSetField('advisedTreatment', v)} placeholder="Select…" disabled={readOnly} allowOther />
+            </div>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label style={{ ...labelStyle, marginBottom: 4 }}>Tooth number <span style={{ color: '#98b0ab', fontWeight: 400 }}>— per advised treatment</span></label>
+              <ToothTagBlock
+                cform={cform}
+                listField="advisedTreatment"
+                mapField="advisedTeeth"
+                emptyCopy="Select an advised treatment above, then tag the teeth it applies to."
+                onChange={(next) => onSetField('advisedTeeth', next)}
+                readOnly={readOnly}
+              />
+            </div>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label style={labelStyle}>Investigation</label>
+              <input className="fld" value={cform.investigation || ''} onChange={(e) => onSetField('investigation', e.target.value)} placeholder="X-ray, IOPA, OPG, pulp test…" style={{ ...fieldStyle, ...(readOnly ? roStyle : {}) }} disabled={readOnly} />
+            </div>
             <div>
               <label style={labelStyle}>Treatment group</label>
               <MultiSelect value={cform.treatmentGroup} options={TREATMENT_GROUPS} onChange={(v) => onSetField('treatmentGroup', v)} placeholder="Select…" disabled={readOnly} allowOther />
             </div>
             <div>
               <label style={labelStyle}>Current treatment</label>
-              <MultiSelect value={cform.treatment} options={TREATMENTS} onChange={(v) => onSetField('treatment', v)} placeholder="Select…" disabled={readOnly} allowOther />
+              {/* toothNumber is derived from the selected treatments, so it must be
+                  recomputed when a treatment is added or removed, not only when a
+                  tooth is tagged. */}
+              <MultiSelect value={cform.treatment} options={TREATMENTS} onChange={(v) => { onSetField('treatment', v); onSetField('toothNumber', deriveToothNumber(v, cform.treatmentTeeth)); }} placeholder="Select…" disabled={readOnly} allowOther />
             </div>
             {(Array.isArray(cform.treatment) ? cform.treatment : []).some(t => /Other/.test(t)) && (
               <div style={{ gridColumn: '1 / -1' }}>
@@ -927,12 +1150,18 @@ export default function Clinical({
               </div>
             )}
             <div style={{ gridColumn: '1 / -1' }}>
-              <label style={labelStyle}>Tooth number</label>
-              <MultiSelect value={cform.toothNumber} options={toothOptions} onChange={(v) => onSetField('toothNumber', v)} placeholder="Select…" disabled={readOnly} searchable />
-            </div>
-            <div>
-              <label style={labelStyle}>Advised treatment</label>
-              <MultiSelect value={cform.advisedTreatment} options={TREATMENTS} onChange={(v) => onSetField('advisedTreatment', v)} placeholder="Select…" disabled={readOnly} allowOther />
+              <label style={{ ...labelStyle, marginBottom: 4 }}>Tooth number <span style={{ color: '#98b0ab', fontWeight: 400 }}>— per treatment</span></label>
+              <ToothTagBlock
+                cform={cform}
+                listField="treatment"
+                mapField="treatmentTeeth"
+                emptyCopy="Select a treatment above, then tag the teeth it applies to."
+                onChange={(next) => {
+                  onSetField('treatmentTeeth', next);
+                  onSetField('toothNumber', deriveToothNumber(cform.treatment, next));
+                }}
+                readOnly={readOnly}
+              />
             </div>
           </div>
 
@@ -982,6 +1211,10 @@ export default function Clinical({
                             ))}
                           </div>
                           <p style={{ fontSize: 12.5, color: '#5c7a76', marginTop: 8 }}>{medDoseText(m)} · {m.food} {medTotal(m)}</p>
+                        </div>
+                        <div style={{ gridColumn: '1 / -1' }}>
+                          <label style={{ display: 'block', fontWeight: 700, fontSize: 12.5, marginBottom: 6 }}>Remarks / instructions</label>
+                          <input className="fld" value={m.remarks || ''} onChange={(e) => setMed(i, 'remarks', e.target.value)} placeholder="e.g. Complete the full course, do not chew" style={{ width: '100%', padding: '11px 13px', border: '1px solid #d6e7e3', borderRadius: 10, fontSize: 14.5, background: '#fff' }} />
                         </div>
                       </div>
                     </div>
@@ -1175,7 +1408,10 @@ export default function Clinical({
                 </div>
                 <div>
                   <label style={labelStyle}>Tooth number</label>
-                  <MultiSelect value={cform.labToothNumber || cform.toothNumber || []} options={toothOptions} onChange={(v) => onSetField('labToothNumber', v)} placeholder="Select…" searchable />
+                  {/* Auto-populated from the derived toothNumber, which now uses FDI
+                      numbering from the tooth picker. Merge those values into the
+                      option list so pre-filled teeth still render as selected. */}
+                  <MultiSelect value={cform.labToothNumber || cform.toothNumber || []} options={labToothOptions} onChange={(v) => onSetField('labToothNumber', v)} placeholder="Select…" searchable />
                 </div>
                 <div style={{ gridColumn: '1 / -1' }}>
                   <label style={labelStyle}>Description</label>
@@ -1351,16 +1587,29 @@ function tryParseJson(v) {
   }
   return v;
 }
+function tryParseObj(v) {
+  if (typeof v === 'string' && v.startsWith('{')) {
+    try { const p = JSON.parse(v); if (p && typeof p === 'object' && !Array.isArray(p)) return p; } catch {}
+  }
+  return v;
+}
 function normalizeClinical(c) {
   const out = { ...c };
   ['chiefComplaint', 'treatmentGroup', 'treatment', 'advisedTreatment', 'toothNumber'].forEach(k => {
     let v = tryParseJson(out[k]);
     out[k] = Array.isArray(v) ? v : (v ? [v] : []);
   });
+  // Legacy records predate per-treatment tooth tagging — normalize to {}.
+  ['treatmentTeeth', 'advisedTeeth'].forEach(k => {
+    const v = tryParseObj(out[k]);
+    out[k] = (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
+  });
+  out.diagnosis = out.diagnosis || '';
+  out.investigation = out.investigation || '';
   out.medicines = Array.isArray(out.medicines) ? out.medicines : tryParseJson(out.medicines) || [];
   out.paySplits = Array.isArray(out.paySplits) ? out.paySplits : tryParseJson(out.paySplits) || [];
   out.documents = Array.isArray(out.documents) ? out.documents : tryParseJson(out.documents) || [];
   return out;
 }
 
-export { buildRx, buildReceipt, normalizeClinical, ReceiptSheet, PrescriptionSheet };
+export { buildRx, buildReceipt, normalizeClinical, ReceiptSheet, PrescriptionSheet, trTeethLabel, advTeethLabel };
