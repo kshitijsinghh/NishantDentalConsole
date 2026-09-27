@@ -4,7 +4,7 @@ import {
   MEDICINE_FORMS, FOOD_OPTIONS, DOC_KINDS, SPLIT_CATEGORIES, FDI_QUADRANTS, FDI_PRIMARY_QUADRANTS,
 } from '../options';
 import { TOUCH_BTN, FLUID_GRID_2COL } from '../styles';
-import { getUploadUrl, uploadToS3, getDocumentUrl, generatePrescriptionPdf, generateReceiptPdf, savePayment, getClinicId } from '../api';
+import { getUploadUrl, uploadToS3, getDocumentUrl, generatePrescriptionPdf, generateReceiptPdf, savePayment, getClinicId, logEvent } from '../api';
 
 // Rasterize a server-generated HTML document (fetched from its URL) into a jsPDF instance.
 async function renderUrlToPdf(url) {
@@ -111,34 +111,58 @@ const roStyle = { opacity: 0.7, background: '#f0f4f3', cursor: 'default' };
 function num(x) { const n = parseFloat(x); return isNaN(n) ? 0 : n; }
 
 /* ── MultiSelect ── */
+// Switching between the Clinical and Billing steps swaps the page content but
+// leaves the window scrolled where it was, so the doctor lands halfway down the
+// new step. Reset it.
+function scrollToTop() {
+  try { window.scrollTo({ top: 0, behavior: 'auto' }); } catch { window.scrollTo(0, 0); }
+}
+
 function MultiSelect({ value, options, onChange, placeholder, disabled, allowOther, searchable }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const arr = Array.isArray(value) ? value : (value ? String(value).split(', ').filter(Boolean) : []);
   const stdOptions = allowOther ? options.filter((o) => o !== 'Other') : options;
   const stdSelected = arr.filter((t) => stdOptions.includes(t));
-  let isOtherOn = false, otherText = '';
-  if (allowOther) {
-    const custom = arr.filter((t) => !stdOptions.includes(t) && t !== 'Other');
-    isOtherOn = arr.includes('Other') || custom.length > 0;
-    otherText = custom.join(', ');
+
+  // Free-text entries are simply array items that are not one of the preset
+  // options — the stored shape already supports any number of them. They are
+  // held in local state while being typed so a half-typed entry never reaches
+  // the record, and an empty row can exist in the UI without creating a blank
+  // chip.
+  const customsFromValue = allowOther ? arr.filter((t) => !stdOptions.includes(t)) : [];
+  const [drafts, setDrafts] = useState(customsFromValue);
+
+  // Resync when the value changes from outside (a different visit is loaded).
+  // Skipped when our own edit produced the change, so typing is not clobbered.
+  const externalKey = customsFromValue.join('\u0000');
+  const draftKey = drafts.filter((d) => d.trim()).join('\u0000');
+  useEffect(() => {
+    if (externalKey !== draftKey) setDrafts(customsFromValue);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalKey]);
+
+  const displayChips = allowOther ? [...stdSelected, ...drafts.filter((d) => d.trim())] : arr;
+
+  function emit(std, nextDrafts) {
+    onChange([...std, ...nextDrafts.filter((d) => d.trim())]);
   }
-  const displayChips = allowOther
-    ? [...stdSelected, ...(isOtherOn ? (otherText ? [otherText] : ['Other']) : [])]
-    : arr;
-  function emit(std, oText, oOn) {
-    const parts = [...std];
-    if (oOn) parts.push(oText || 'Other');
-    onChange(parts);
-  }
+  function setDrafted(next) { setDrafts(next); emit(stdSelected, next); }
+  function addOther() { setDrafts([...drafts, '']); }
+  function setOtherAt(i, text) { setDrafted(drafts.map((d, x) => (x === i ? text : d))); }
+  function removeOtherAt(i) { setDrafted(drafts.filter((_, x) => x !== i)); }
+
   function toggle(opt) {
-    if (allowOther && opt === 'Other') { emit(stdSelected, '', !isOtherOn); return; }
     const base = allowOther ? stdSelected : arr;
     const next = base.includes(opt) ? base.filter((s) => s !== opt) : [...base, opt];
-    if (allowOther) emit(next, otherText, isOtherOn); else onChange(next);
+    if (allowOther) emit(next, drafts); else onChange(next);
   }
   function removeChip(chip) {
-    if (allowOther && !stdOptions.includes(chip)) { emit(stdSelected, '', false); return; }
+    if (allowOther && !stdOptions.includes(chip)) {
+      const i = drafts.findIndex((d) => d === chip);
+      if (i >= 0) removeOtherAt(i);
+      return;
+    }
     toggle(chip);
   }
   const filtered = searchable && search ? stdOptions.filter((o) => o.toLowerCase().includes(search.toLowerCase())) : stdOptions;
@@ -179,17 +203,33 @@ function MultiSelect({ value, options, onChange, placeholder, disabled, allowOth
               );
             })}
             {allowOther && (!search || 'other'.includes(search.toLowerCase())) && (
-              <>
-                <div onClick={() => toggle('Other')} style={{ padding: '10px 14px', cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', gap: 10, background: isOtherOn ? '#eef7f6' : '#fff', borderBottom: '1px solid #f0f6f5' }}>
-                  {checkBox(isOtherOn)}
-                  <span style={{ color: isOtherOn ? '#0e3b39' : '#5c7a76', fontWeight: isOtherOn ? 600 : 400 }}>Other</span>
-                </div>
-                {isOtherOn && (
-                  <div style={{ padding: '4px 14px 10px', background: '#eef7f6' }}>
-                    <input value={otherText} onChange={(e) => emit(stdSelected, e.target.value, true)} onClick={(e) => e.stopPropagation()} placeholder="Type here…" autoFocus style={{ width: '100%', padding: '8px 10px', border: '1px solid #d6e7e3', borderRadius: 8, fontSize: 14, background: '#fff' }} />
+              <div style={{ background: '#eef7f6', borderTop: '1px solid #e2efec' }}>
+                {drafts.map((d, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px' }}>
+                    <input
+                      value={d}
+                      onChange={(e) => setOtherAt(i, e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      placeholder="Type here…"
+                      autoFocus={i === drafts.length - 1 && d === ''}
+                      style={{ flex: 1, padding: '8px 10px', border: '1px solid #d6e7e3', borderRadius: 8, fontSize: 14, background: '#fff' }}
+                    />
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); removeOtherAt(i); }}
+                      title="Remove"
+                      style={{ width: 28, height: 28, flexShrink: 0, borderRadius: 8, border: '1px solid #f0d9d3', background: '#fdf0ec', color: '#c0392b', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}
+                    >&times;</button>
                   </div>
-                )}
-              </>
+                ))}
+                <div
+                  onClick={(e) => { e.stopPropagation(); addOther(); }}
+                  style={{ padding: '10px 14px', cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', gap: 8, color: '#0e756c', fontWeight: 700 }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+                  Add Other
+                </div>
+              </div>
             )}
             {searchable && search && filtered.length === 0 && <div style={{ padding: 14, color: '#98b0ab', fontSize: 14, textAlign: 'center' }}>No matches</div>}
           </div>
@@ -389,6 +429,18 @@ function teethMapLabel(c, listField, mapField) {
   }).join(' · ');
 }
 function trTeethLabel(c) { return teethMapLabel(c, 'treatment', 'treatmentTeeth'); }
+
+// One payment-split line per treatment marked in the Doctor's form, named like
+// "RCT (32, 21)" — or just "Composite Restoration" when no teeth are tagged.
+// Custom lines carry the name as-is, so the receipt prints it unchanged.
+function treatmentSplitLines(c) {
+  const map = (c && c.treatmentTeeth) || {};
+  return asList(c && c.treatment).map((t) => {
+    const name = /Other/.test(t) && c.treatmentOther ? c.treatmentOther : t;
+    const teeth = asList(map[t]);
+    return { category: 'Custom', custom: teeth.length ? name + ' (' + teeth.join(', ') + ')' : name, amount: '' };
+  });
+}
 function advTeethLabel(c) { return teethMapLabel(c, 'advisedTreatment', 'advisedTeeth'); }
 
 // toothNumber is no longer edited directly — it is the sorted union of every
@@ -482,6 +534,54 @@ function buildReceipt(cf, meta) {
 }
 
 /* ── Print-ready Prescription sheet ── */
+// Download turns a server document (or the on-screen sheet) into a PDF via
+// html2canvas + jsPDF, which takes a few seconds on a large prescription. The
+// button gave no feedback at all, so doctors clicked it repeatedly.
+function DownloadButton({ onDownload, label }) {
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState('');
+  async function go() {
+    if (busy) return;
+    setBusy(true);
+    setFailed('');
+    try {
+      await onDownload();
+    } catch (err) {
+      setFailed(String((err && err.message) || 'Download failed'));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <>
+      {/* Outside the button: a <style> child would land in its textContent and
+          pollute the accessible name. */}
+      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+    <button
+      onClick={go}
+      disabled={busy}
+      title={failed || undefined}
+      style={{
+        padding: '8px 15px', borderRadius: 9, border: 0,
+        background: busy ? '#0b7a72' : (failed ? '#c0392b' : '#12a094'),
+        color: '#fff', fontWeight: 700, fontSize: 13,
+        cursor: busy ? 'progress' : 'pointer',
+        display: 'inline-flex', alignItems: 'center', gap: 7, minWidth: 104, justifyContent: 'center',
+      }}
+    >
+      {busy && (
+        <span style={{
+          width: 13, height: 13, borderRadius: '50%', flexShrink: 0,
+          border: '2px solid rgba(255,255,255,.45)', borderTopColor: '#fff',
+          animation: 'spin .7s linear infinite',
+        }} />
+      )}
+      {busy ? 'Preparing…' : (failed ? 'Retry download' : (label || 'Download'))}
+    </button>
+    </>
+  );
+}
+
 function PrescriptionSheet({ rx, onClose, clinicName, clinicAddress, doctorName, doctorQualification, rxTemplateUrl, hasDocxTemplate }) {
   const hasImageTemplate = !!rxTemplateUrl && !hasDocxTemplate;
   const [docxUrl, setDocxUrl] = useState(null);
@@ -519,13 +619,13 @@ function PrescriptionSheet({ rx, onClose, clinicName, clinicAddress, doctorName,
               <button onClick={() => printAsPdf(docxUrl)} style={{ padding: '8px 15px', borderRadius: 9, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print</button>
             )}
             {hasDocxTemplate && docxUrl && (
-              <button onClick={() => downloadAsPdf(docxUrl, `Prescription_${rx.visitId || 'doc'}.pdf`)} style={{ padding: '8px 15px', borderRadius: 9, border: 0, background: '#12a094', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Download</button>
+              <DownloadButton onDownload={() => downloadAsPdf(docxUrl, `Prescription_${rx.visitId || 'doc'}.pdf`)} />
             )}
             {!hasDocxTemplate && (
               <button onClick={() => window.print()} style={{ padding: '8px 15px', borderRadius: 9, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print</button>
             )}
             {!hasDocxTemplate && (
-              <button onClick={() => downloadElementAsPdf('rx-print-body', `Prescription_${rx.visitId || 'doc'}.pdf`)} style={{ padding: '8px 15px', borderRadius: 9, border: 0, background: '#12a094', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Download</button>
+              <DownloadButton onDownload={() => downloadElementAsPdf('rx-print-body', `Prescription_${rx.visitId || 'doc'}.pdf`)} />
             )}
             <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 8, border: 0, background: 'rgba(255,255,255,.15)', color: '#fff', fontSize: 15, cursor: 'pointer' }}>✕</button>
           </div>
@@ -712,13 +812,13 @@ function ReceiptSheet({ receipt, onClose, clinicName, clinicAddress, doctorName,
               <button onClick={() => printAsPdf(docxUrl)} style={{ padding: '8px 15px', borderRadius: 9, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print</button>
             )}
             {hasReceiptTemplate && docxUrl && (
-              <button onClick={() => downloadAsPdf(docxUrl, `Receipt_${receipt.visitId || 'doc'}.pdf`)} style={{ padding: '8px 15px', borderRadius: 9, border: 0, background: '#12a094', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Download</button>
+              <DownloadButton onDownload={() => downloadAsPdf(docxUrl, `Receipt_${receipt.visitId || 'doc'}.pdf`)} />
             )}
             {!hasReceiptTemplate && (
               <button onClick={() => window.print()} style={{ padding: '8px 15px', borderRadius: 9, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Print</button>
             )}
             {!hasReceiptTemplate && (
-              <button onClick={() => downloadElementAsPdf('rc-print-body', `Receipt_${receipt.visitId || 'doc'}.pdf`)} style={{ padding: '8px 15px', borderRadius: 9, border: 0, background: '#12a094', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>Download</button>
+              <DownloadButton onDownload={() => downloadElementAsPdf('rc-print-body', `Receipt_${receipt.visitId || 'doc'}.pdf`)} />
             )}
             <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 8, border: 0, background: 'rgba(255,255,255,.15)', color: '#fff', fontSize: 15, cursor: 'pointer' }}>✕</button>
           </div>
@@ -836,6 +936,11 @@ export default function Clinical({
   const fileInputRef = useRef(null);
   const pendingRowRef = useRef(null);
   const [uploadingRowIds, setUploadingRowIds] = useState([]);
+  // Counted separately from uploadingRowIds: that list is keyed by the row that
+  // started the upload and stays EMPTY when rowId is null, so it cannot be used
+  // to decide whether a save is safe. This counter always reflects reality.
+  const [uploadsInFlight, setUploadsInFlight] = useState(0);
+  const uploadBusy = uploadsInFlight > 0;
 
   const medicines = cform.medicines || [];
   const paySplits = cform.paySplits || [];
@@ -865,6 +970,11 @@ export default function Clinical({
   }
 
   /* ── Split handlers ── */
+  const treatmentLines = treatmentSplitLines(cform);
+  // Split payment is offered first when treatments are marked; Add line item
+  // takes over once lines exist, or when there are no treatments to split by.
+  const showSplitButton = paySplits.length === 0 && treatmentLines.length > 0;
+  function splitByTreatment() { onSetField('paySplits', treatmentLines); setRcError(''); }
   function addSplit() { onSetField('paySplits', [...paySplits, { category: 'Treatment', custom: '', amount: '' }]); setRcError(''); }
   function removeSplit(i) { onSetField('paySplits', paySplits.filter((_, x) => x !== i)); setRcError(''); }
   function setSplit(i, key, val) {
@@ -907,6 +1017,7 @@ export default function Clinical({
     const visitId = cur.visitId;
 
     setUploadingRowIds(prev => rowId !== null ? [...prev, rowId] : prev);
+    setUploadsInFlight(n => n + 1);
 
     const uploadOne = async (file) => {
       try {
@@ -915,7 +1026,29 @@ export default function Clinical({
           await uploadToS3(result.uploadUrl, file);
           return { name: file.name, kind, rowId, type: file.type || '', s3Key: result.key, at: Date.now() };
         }
-      } catch { /* fall through to base64 */ }
+        // Null rather than a throw: AWS_URL or CLINIC_ID missing from the build.
+        logEvent({
+          kind: 'document_upload_fallback', severity: 'data_loss_risk',
+          visitId, fileName: file && file.name, fileBytes: file && file.size,
+          docKind: kind, error: 'getUploadUrl returned null (AWS not configured for this build)',
+        });
+      } catch (err) {
+        // The base64 fallback below looks like a safety net but is not one:
+        // App.jsx strips `dataUrl` before saving (the sheet cell cannot hold
+        // it), so the stored record ends up with neither s3Key nor dataUrl and
+        // the document is silently lost. Log it loudly — this is data loss the
+        // doctor is never shown.
+        logEvent({
+          kind: 'document_upload_fallback',
+          severity: 'data_loss_risk',
+          visitId,
+          fileName: file && file.name,
+          fileBytes: file && file.size,
+          fileType: file && file.type,
+          docKind: kind,
+          error: String((err && err.message) || err),
+        });
+      }
       return new Promise((resolve) => {
         const r = new FileReader();
         r.onload = () => resolve({ name: file.name, kind, rowId, type: file.type || '', dataUrl: String(r.result || ''), at: Date.now() });
@@ -931,6 +1064,7 @@ export default function Clinical({
       onSetField('documents', [...existing, ...good]);
     }).finally(() => {
       setUploadingRowIds(prev => prev.filter(id => id !== rowId));
+      setUploadsInFlight(n => Math.max(0, n - 1));
       try { if (input) input.value = ''; } catch (err) {}
     });
   }
@@ -1075,8 +1209,8 @@ export default function Clinical({
       {/* ── Step switcher ── */}
       {!readOnly && (
         <div style={{ display: 'flex', gap: 8, marginTop: 16, background: '#fff', border: '1px solid #dfece9', borderRadius: 14, padding: 8 }}>
-          <button onClick={() => setStep(1)} style={{ flex: 1, padding: '11px 6px', borderRadius: 10, border: 0, cursor: 'pointer', fontWeight: 700, fontSize: 14, background: step === 1 ? '#0e756c' : 'transparent', color: step === 1 ? '#fff' : '#5c7a76' }}>1 · Clinical</button>
-          <button onClick={() => setStep(2)} style={{ flex: 1, padding: '11px 6px', borderRadius: 10, border: 0, cursor: 'pointer', fontWeight: 700, fontSize: 14, background: step === 2 ? '#0e756c' : 'transparent', color: step === 2 ? '#fff' : '#5c7a76' }}>2 · Billing & files</button>
+          <button onClick={() => { setStep(1); scrollToTop(); }} style={{ flex: 1, padding: '11px 6px', borderRadius: 10, border: 0, cursor: 'pointer', fontWeight: 700, fontSize: 14, background: step === 1 ? '#0e756c' : 'transparent', color: step === 1 ? '#fff' : '#5c7a76' }}>1 · Clinical</button>
+          <button onClick={() => { setStep(2); scrollToTop(); }} style={{ flex: 1, padding: '11px 6px', borderRadius: 10, border: 0, cursor: 'pointer', fontWeight: 700, fontSize: 14, background: step === 2 ? '#0e756c' : 'transparent', color: step === 2 ? '#fff' : '#5c7a76' }}>2 · Billing & files</button>
         </div>
       )}
 
@@ -1115,7 +1249,7 @@ export default function Clinical({
             </div>
             <div>
               <label style={labelStyle}>Advised treatment</label>
-              <MultiSelect value={cform.advisedTreatment} options={TREATMENTS} onChange={(v) => onSetField('advisedTreatment', v)} placeholder="Select…" disabled={readOnly} allowOther />
+              <MultiSelect value={cform.advisedTreatment} options={TREATMENTS} onChange={(v) => onSetField('advisedTreatment', v)} placeholder="Select…" disabled={readOnly} allowOther searchable />
             </div>
             <div style={{ gridColumn: '1 / -1' }}>
               <label style={{ ...labelStyle, marginBottom: 4 }}>Tooth number <span style={{ color: '#98b0ab', fontWeight: 400 }}>— per advised treatment</span></label>
@@ -1141,7 +1275,7 @@ export default function Clinical({
               {/* toothNumber is derived from the selected treatments, so it must be
                   recomputed when a treatment is added or removed, not only when a
                   tooth is tagged. */}
-              <MultiSelect value={cform.treatment} options={TREATMENTS} onChange={(v) => { onSetField('treatment', v); onSetField('toothNumber', deriveToothNumber(v, cform.treatmentTeeth)); }} placeholder="Select…" disabled={readOnly} allowOther />
+              <MultiSelect value={cform.treatment} options={TREATMENTS} onChange={(v) => { onSetField('treatment', v); onSetField('toothNumber', deriveToothNumber(v, cform.treatmentTeeth)); }} placeholder="Select…" disabled={readOnly} allowOther searchable />
             </div>
             {(Array.isArray(cform.treatment) ? cform.treatment : []).some(t => /Other/.test(t)) && (
               <div style={{ gridColumn: '1 / -1' }}>
@@ -1233,7 +1367,7 @@ export default function Clinical({
               </div>
               {/* Save and Next CTA (step 1 only) */}
               <div style={{ display: 'flex', gap: 12, marginTop: 22, justifyContent: 'flex-end' }}>
-                <button onClick={() => { if (onSaveAndNext) onSaveAndNext(); setStep(2); }} style={{ padding: '11px 22px', borderRadius: 10, border: 0, background: '#0e756c', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>Save and Next →</button>
+                <button onClick={() => { if (onSaveAndNext) onSaveAndNext(); setStep(2); scrollToTop(); }} style={{ padding: '11px 22px', borderRadius: 10, border: 0, background: '#0e756c', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>Save and Next →</button>
               </div>
             </>
           )}
@@ -1303,10 +1437,18 @@ export default function Clinical({
               </p>
             )}
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 14 }}>
-              <button onClick={addSplit} style={{ padding: '9px 15px', borderRadius: 10, border: '1px dashed #cfe3df', background: '#f7fbfa', color: '#0e756c', fontWeight: 700, fontSize: 13.5, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
-                Add line item
-              </button>
+              {showSplitButton && (
+                <button onClick={splitByTreatment} title="One line item per treatment marked in the Doctor's form" style={{ padding: '9px 15px', borderRadius: 10, border: 0, background: '#0e756c', color: '#fff', fontWeight: 700, fontSize: 13.5, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h16M4 12h10M4 18h7"/></svg>
+                  Split payment
+                </button>
+              )}
+              {!showSplitButton && (
+                <button onClick={addSplit} style={{ padding: '9px 15px', borderRadius: 10, border: '1px dashed #cfe3df', background: '#f7fbfa', color: '#0e756c', fontWeight: 700, fontSize: 13.5, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                  Add line item
+                </button>
+              )}
               <button onClick={openReceipt} style={{ padding: '9px 15px', borderRadius: 10, border: '1px solid #cfe3df', background: splitBlocked ? '#f0f4f3' : '#fff', color: splitBlocked ? '#98b0ab' : '#0e756c', fontWeight: 700, fontSize: 13.5, cursor: splitBlocked ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 7 }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2h12v20l-3-2-3 2-3-2-3 2V2z"/><path d="M9 8h6M9 12h6"/></svg>
                 Generate payment receipt
@@ -1426,7 +1568,7 @@ export default function Clinical({
           <p style={{ fontSize: 13, color: '#98b0ab', marginBottom: 12 }}>Attach X-rays, prescriptions or medical reports for this visit.</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <input ref={fileInputRef} type="file" accept="image/*,application/pdf" multiple onChange={onUploadDocs} style={{ display: 'none' }} />
-            {uploadingRowIds.length > 0 && <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>}
+            <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
             {uploadRows.map((ur) => {
               const rowDocs = documents.filter(d => d.rowId === ur.rowId);
               const hasFiles = rowDocs.length > 0;
@@ -1510,11 +1652,16 @@ export default function Clinical({
         </div>
       ) : step === 2 ? (
         <div style={{ display: 'flex', gap: 12, marginTop: 20, justifyContent: 'space-between', flexWrap: 'wrap' }}>
-          <button onClick={() => setStep(1)} style={{ padding: '11px 20px', borderRadius: 10, border: '1px solid #cfe3df', background: '#f2f9f8', color: '#0e756c', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>← Back to Doctor's form</button>
+          <button onClick={() => { setStep(1); scrollToTop(); }} style={{ padding: '11px 20px', borderRadius: 10, border: '1px solid #cfe3df', background: '#f2f9f8', color: '#0e756c', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>← Back to Doctor's form</button>
           <div style={{ display: 'flex', gap: 12 }}>
             <button onClick={onGoBack} style={{ ...TOUCH_BTN, padding: '11px 20px', borderRadius: 10, border: '1px solid #d6e7e3', background: '#fff', color: '#5c7a76', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>Cancel</button>
-            <button onClick={onSaveClinical} disabled={saving || splitBlocked} style={{ ...TOUCH_BTN, padding: '11px 22px', borderRadius: 10, border: 0, background: (saving || splitBlocked) ? '#b8d0cd' : '#0e756c', color: '#fff', fontWeight: 700, fontSize: 14, cursor: (saving || splitBlocked) ? 'not-allowed' : 'pointer' }}>
-              {saving ? 'Saving…' : 'Save'}
+            {/* Saving mid-upload writes a document record with neither an
+                s3Key nor a dataUrl, so the file is silently lost. Block it. */}
+            <button onClick={onSaveClinical} disabled={saving || splitBlocked || uploadBusy} style={{ ...TOUCH_BTN, padding: '11px 22px', borderRadius: 10, border: 0, background: (saving || splitBlocked || uploadBusy) ? '#b8d0cd' : '#0e756c', color: '#fff', fontWeight: 700, fontSize: 14, cursor: (saving || splitBlocked || uploadBusy) ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              {uploadBusy && (
+                <span style={{ width: 13, height: 13, borderRadius: '50%', border: '2px solid rgba(255,255,255,.5)', borderTopColor: '#fff', animation: 'spin .7s linear infinite' }} />
+              )}
+              {saving ? 'Saving…' : (uploadBusy ? 'Uploading…' : 'Save')}
             </button>
           </div>
         </div>

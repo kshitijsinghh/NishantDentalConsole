@@ -6,7 +6,7 @@ import Clinical from './views/Clinical';
 import Appointments from './views/Appointments';
 import Patients from './views/Patients';
 import PatientDetail from './views/PatientDetail';
-import { fetchList, saveIntake, saveClinical, uploadQr, getCachedList, fetchOrg, getRxTemplateUrl, generatePrescriptionPdf } from './api';
+import { fetchList, saveIntake, saveClinical, uploadQr, getCachedList, fetchOrg, getRxTemplateUrl, generatePrescriptionPdf, updatePatient } from './api';
 
 function today() {
   const d = new Date();
@@ -41,6 +41,15 @@ function fmtTime(t) {
   const ampm = h >= 12 ? 'PM' : 'AM';
   const hr = h % 12 || 12;
   return hr + ':' + String(m).padStart(2, '0') + ' ' + ampm;
+}
+
+// Show the doctor what actually failed. Apps Script returns readable messages
+// ("Visit not found: P0027_1", "Service invoked too many times"), and a real
+// message is something they can report; "Something went wrong" is not.
+function errText(err, fallback) {
+  const m = String((err && err.message) || '').trim();
+  if (!m) return fallback;
+  return m.length > 160 ? m.slice(0, 160) + '…' : m;
 }
 function blankClinical() {
   return {
@@ -105,7 +114,7 @@ export default function App({ user, onLogout }) {
   const [apptDate, setApptDate] = useState(today());
   const [showApptCal, setShowApptCal] = useState(false);
 
-  const [form, setForm] = useState({ mobile: '', name: '', age: '', gender: '', date: today() });
+  const [form, setForm] = useState({ mobile: '', name: '', age: '', gender: '', address: '', date: today() });
   const [lookupState, setLookupState] = useState('');
   const [existingPatientId, setExistingPatientId] = useState('');
   const [mobilePatients, setMobilePatients] = useState([]);
@@ -176,14 +185,26 @@ export default function App({ user, onLogout }) {
     });
   }
 
+  // Applied locally on success: the server returns only a small ack, and the
+  // name is denormalised nowhere in the client model (views read patient.name).
+  async function onRenamePatient(patientId, name) {
+    const res = await updatePatient({ patientId, name });
+    setDbState(prev => {
+      const p = prev.patients[patientId];
+      if (!p) return prev;
+      return { ...prev, patients: { ...prev.patients, [patientId]: { ...p, name: res.name || name } } };
+    });
+    return res;
+  }
+
   async function loadList(isRefresh) {
     if (isRefresh) setRefreshing(true); else setLoading(true);
     try {
       const res = await fetchList();
       applySnapshot(res);
       setLoadError('');
-    } catch {
-      setLoadError('Something went wrong, please try again');
+    } catch (err) {
+      setLoadError(errText(err, 'Something went wrong, please try again'));
     } finally {
       if (isRefresh) setRefreshing(false); else setLoading(false);
     }
@@ -237,7 +258,7 @@ export default function App({ user, onLogout }) {
   }
   function goIntake() {
     pushView('intake');
-    setForm({ mobile: '', name: '', age: '', gender: '', date: today() });
+    setForm({ mobile: '', name: '', age: '', gender: '', address: '', date: today() });
     setLookupState('');
     setExistingPatientId('');
     setMobilePatients([]);
@@ -301,7 +322,7 @@ export default function App({ user, onLogout }) {
   async function startVisitForExisting(pid) {
     const p = db.patients[pid];
     if (!p) return;
-    const intakeData = { mobile: p.mobile, name: p.name, age: p.age, gender: p.gender, date: today() };
+    const intakeData = { mobile: p.mobile, name: p.name, age: p.age, gender: p.gender, address: p.address || '', date: today() };
     const optNo = p.visits.length + 1;
     const optVid = pid + '_' + optNo;
     const optVisit = { visitId: optVid, no: optNo, date: today(), done: false, clinical: null, createdAt: new Date().toISOString() };
@@ -314,7 +335,7 @@ export default function App({ user, onLogout }) {
     setSavedFlash(false);
     setClinicalError('');
     setClinicalReadOnly(false);
-    setForm({ mobile: '', name: '', age: '', gender: '', date: today() });
+    setForm({ mobile: '', name: '', age: '', gender: '', address: '', date: today() });
     setLookupState('');
     setExistingPatientId('');
     setMobilePatients([]);
@@ -347,7 +368,7 @@ export default function App({ user, onLogout }) {
     }
     setIntakeError('');
 
-    const intakeData = { mobile: mm, name: form.name.trim(), age: form.age, gender: form.gender, date: form.date };
+    const intakeData = { mobile: mm, name: form.name.trim(), age: form.age, gender: form.gender, address: (form.address || '').trim(), date: form.date };
     const allOnMobile = findAllByMobile(db, mm);
     const existingP = addAnother ? null : allOnMobile.find((p) => p.name.toLowerCase() === form.name.trim().toLowerCase());
     const optPid = existingP ? existingP.patientId : 'P' + String(db.seq + 1).padStart(4, '0');
@@ -359,7 +380,7 @@ export default function App({ user, onLogout }) {
     if (existingP) {
       optDb.patients[optPid] = { ...existingP, visits: [...existingP.visits, optVisit] };
     } else {
-      optDb.patients[optPid] = { patientId: optPid, name: intakeData.name, age: intakeData.age, gender: intakeData.gender, mobile: mm, visits: [optVisit] };
+      optDb.patients[optPid] = { patientId: optPid, name: intakeData.name, age: intakeData.age, gender: intakeData.gender, address: intakeData.address, mobile: mm, visits: [optVisit] };
       optDb.order = [optPid, ...db.order];
       optDb.seq = db.seq + 1;
     }
@@ -372,7 +393,7 @@ export default function App({ user, onLogout }) {
     setSavedFlash(false);
     setClinicalError('');
     setClinicalReadOnly(false);
-    setForm({ mobile: '', name: '', age: '', gender: '', date: today() });
+    setForm({ mobile: '', name: '', age: '', gender: '', address: '', date: today() });
     setLookupState('');
     setExistingPatientId('');
     setMobilePatients([]);
@@ -408,7 +429,7 @@ export default function App({ user, onLogout }) {
   function onCreateNewVisitFromAppt(pid) {
     const p = db.patients[pid];
     if (!p) return;
-    setForm({ mobile: p.mobile, name: p.name, age: p.age, gender: p.gender, date: today() });
+    setForm({ mobile: p.mobile, name: p.name, age: p.age, gender: p.gender, address: p.address || '', date: today() });
     setLookupState('existing');
     setExistingPatientId(pid);
     setMobilePatients(findAllByMobile(db, p.mobile));
@@ -434,8 +455,8 @@ export default function App({ user, onLogout }) {
       const res = await saveClinical({ patientId: curPatientId, visitId: curVisitId, cform: saveForm });
       if (res.patients) applySnapshot(res);
       else applyClinicalLocally(curPatientId, curVisitId, saveForm, res);
-    } catch {
-      setClinicalError('Auto-save failed — your data is still in the form.');
+    } catch (err) {
+      setClinicalError(errText(err, 'Auto-save failed — your data is still in the form.'));
     } finally {
       setSavingClinical(false);
     }
@@ -462,8 +483,8 @@ export default function App({ user, onLogout }) {
         setSavedFlash(false);
         replaceView('dashboard');
       }, 900);
-    } catch {
-      setClinicalError('Something went wrong, please try again');
+    } catch (err) {
+      setClinicalError(errText(err, 'Something went wrong, please try again'));
     } finally {
       setSavingClinical(false);
     }
@@ -477,8 +498,8 @@ export default function App({ user, onLogout }) {
       try {
         const res = await uploadQr({ dataUrl: reader.result, filename: file.name });
         applySnapshot(res);
-      } catch {
-        setClinicalError('Something went wrong, please try again');
+      } catch (err) {
+        setClinicalError(errText(err, 'Something went wrong, please try again'));
       }
     };
     reader.readAsDataURL(file);
@@ -769,7 +790,7 @@ export default function App({ user, onLogout }) {
         {view === 'patientDetail' && detailPid && db.patients[detailPid] && (
           <PatientDetail
             patient={db.patients[detailPid]} patientId={detailPid}
-            onGoBack={goBack}
+            onGoBack={goBack} onRenamePatient={onRenamePatient}
             clinicName={org?.clinicName} clinicAddress={org ? [org.clinicAddress, ...(org.contactNumbers || []).map(n => '+91 ' + n)].filter(Boolean).join(' · ') : ''}
             doctorName={org?.doctorName} doctorQualification={org?.doctorQualification}
             rxTemplateUrl={rxTemplateUrl}
