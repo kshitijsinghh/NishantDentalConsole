@@ -155,6 +155,7 @@ async function handle(res) {
   let json;
   try {
     json = JSON.parse(text);
+    noteServerCapability(json);
   } catch {
     // Apps Script served HTML instead of JSON — typically a quota/permission
     // interstitial rather than our own error envelope.
@@ -167,6 +168,7 @@ async function handle(res) {
   if (!json.ok) {
     const e = new Error(json.error || 'Something went wrong, please try again');
     e.httpStatus = res.status;
+    e.authError = json.authError || '';
     e.serverError = json.error || '';
     e.responseBody = text;
     throw e;
@@ -179,17 +181,52 @@ async function handle(res) {
 
 // Two attempts, as before — retries are deliberately kept for POSTs. Each
 // attempt is timed and recorded separately.
+// Apps Script's second hop (script.googleusercontent.com/macros/echo) returns
+// a transient 404 under load even when the script itself ran fine — observed
+// with serverPerf.totalMs of 2.9s behind a client-visible 43s. Retrying
+// immediately just hits the same bad moment, so attempts are now spaced.
+//
+// Retries used to be capped at two, back-to-back, because a retried POST could
+// duplicate a row. requestId replay removed that risk, but only against a
+// server that supports it — so writes stay conservative until we have seen
+// proof (the _idem marker) from this deployment.
+const RETRY_DELAYS_MS = [700, 1800, 4000];
+let serverSupportsReplay = false;
+
+// Called by handle() on every parsed response, success or failure.
+function noteServerCapability(json) {
+  if (json && json._idem) serverSupportsReplay = true;
+}
+
+function isRetryable(res) {
+  if (!res) return true;                 // network error or timeout
+  if (res.status === 404) return true;   // the googleusercontent echo failure
+  if (res.status === 429) return true;
+  if (res.status >= 500) return true;
+  return false;
+}
+
 async function fetchWithRetry(url, opts, ctx) {
   const method = (opts && opts.method) || 'GET';
   const attempts = [];
   let res = null;
 
-  for (let n = 1; n <= 2; n++) {
+  // A GET can always be retried. A POST only beyond the original two attempts
+  // once this deployment has shown it replays by requestId.
+  const maxAttempts = (method !== 'POST' || serverSupportsReplay) ? 4 : 2;
+
+  for (let n = 1; n <= maxAttempts; n++) {
+    if (n > 1) {
+      const base = RETRY_DELAYS_MS[Math.min(n - 2, RETRY_DELAYS_MS.length - 1)];
+      // Jitter so several tabs retrying at once do not sync up.
+      await new Promise((r) => setTimeout(r, base + Math.floor(Math.random() * 400)));
+    }
     const t0 = Date.now();
     try {
       res = await fetchWithTimeout(url, opts);
       attempts.push({ n, outcome: res.ok ? 'ok' : 'http_error', httpStatus: res.status, ms: Date.now() - t0 });
       if (res.ok) break;
+      if (!isRetryable(res)) break;
     } catch (err) {
       res = null;
       // A hang and a dropped connection need telling apart: the first means
@@ -210,7 +247,10 @@ async function fetchWithRetry(url, opts, ctx) {
 
   // A write that was sent twice and eventually succeeded has very likely been
   // applied twice — saveIntake appends a visit row unconditionally.
-  const duplicateRisk = method === 'POST' && failedFirst && finalOk;
+  // With requestId replay in place a retried POST is no longer duplicated,
+  // so the raw signal is kept but qualified by whether protection was active.
+  const duplicateRisk = method === 'POST' && failedFirst && finalOk && !serverSupportsReplay;
+  const retriedUnderReplay = method === 'POST' && failedFirst && serverSupportsReplay;
 
   // Failures, retries and slow calls are always logged; clean fast requests
   // are sampled, so the log keeps a denominator to compute an error rate from.
@@ -229,6 +269,8 @@ async function fetchWithRetry(url, opts, ctx) {
       slow: totalMs > SLOW_MS,
       timedOut: attempts.some((a) => a.outcome === 'timeout'),
       duplicateRisk,
+      retriedUnderReplay,
+      maxAttempts,
       sampled: !notable,
       requestBody: LOG_BODIES && opts && opts.body ? clip(opts.body, BODY_MAX) : undefined,
     });
@@ -236,9 +278,19 @@ async function fetchWithRetry(url, opts, ctx) {
   return res;
 }
 
+// The portal's read. Returns only the records belonging to the phone number
+// on the caller's token — replaces fetchList(), which returned every patient
+// in the clinic to anyone who had logged into the portal.
+export async function fetchPatientSnapshot() {
+  assertConfigured();
+  const res = await fetchWithRetry(await withToken(BASE_URL + '?action=patientSnapshot'), undefined, { action: 'patientSnapshot' });
+  if (!res) throw new Error('Could not reach the clinic server. Check your connection.');
+  return handle(res);
+}
+
 export async function fetchList() {
   assertConfigured();
-  const res = await fetchWithRetry(BASE_URL + '?action=list', undefined, { action: 'list' });
+  const res = await fetchWithRetry(await withToken(BASE_URL + '?action=list'), undefined, { action: 'list' });
   if (!res) throw new Error('Could not reach the clinic server. Check your connection.');
   const json = await handle(res);
   if (LOG_BODIES && LOG_SUCCESS_RESPONSES) {
@@ -262,6 +314,12 @@ export async function fetchList() {
 // action, so the browser is handed "Unknown or missing action: undefined" for
 // a write that succeeded. Without handling, the doctor sees "Visit creation
 // failed", presses save again, and the row is written twice.
+import { getAccessToken, forceRefresh } from './auth';
+
+// Apps Script answers 200 with { ok:false, authError } rather than a 401,
+// because it has no way to set a status code on a rejected request.
+const AUTH_ERROR_RE = /^(missing|expired|bad_signature|malformed|bad_payload|not_yet_valid|wrong_clinic|no_secret_configured)$/;
+
 const LOST_RESPONSE_RE = /unknown or missing action/i;
 const LOST_RESPONSE_RETRIES = 2;
 
@@ -281,15 +339,23 @@ function serverReplaysRetries(body) {
   try { return !!JSON.parse(body)._idem; } catch { return false; }
 }
 
+// Apps Script Web Apps expose no request headers, so the token rides in the
+// query string for GETs and in the body for POSTs.
+async function withToken(url) {
+  const t = await getAccessToken();
+  return t ? url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(t) : url;
+}
+
 async function post(payload) {
   assertConfigured();
   // Constant across retries. The server stores the first response under this
   // id and replays it, so a retry cannot write a second row.
   const requestId = newRequestId();
+  const token = await getAccessToken();
   const opts = {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ ...payload, requestId }),
+    body: JSON.stringify({ ...payload, requestId, ...(token ? { token } : {}) }),
   };
   const ctx = { action: payload.action, patientId: payload.patientId, visitId: payload.visitId };
 
@@ -321,6 +387,16 @@ async function post(payload) {
       }
       return json;
     } catch (err) {
+      // An expired token mid-flight should never reach the doctor as an
+      // error: refresh once and resend the identical request, requestId and
+      // all, so a write cannot be duplicated by the retry.
+      if (err.authError && AUTH_ERROR_RE.test(err.authError) && attempt === 0) {
+        const fresh = await forceRefresh();
+        if (fresh) {
+          opts.body = JSON.stringify({ ...payload, requestId, token: fresh });
+          continue;
+        }
+      }
       const lost = !!err.serverError
         && LOST_RESPONSE_RE.test(err.serverError)
         && serverReplaysRetries(err.responseBody);
@@ -334,6 +410,10 @@ async function post(payload) {
         patientId: payload.patientId || '', visitId: payload.visitId || '',
         httpStatus: err.httpStatus || null,
         serverError: err.serverError || '',
+        // The specific reason a token was refused (missing / expired /
+        // bad_signature / wrong_clinic / patient_role_forbidden:<action>).
+        // Without this every refusal logs as the same "Not authorised."
+        authError: err.authError || '',
         nonJson: !!err.nonJson,
         message: String(err.message || ''),
         requestId,
@@ -357,8 +437,22 @@ async function post(payload) {
   }
 }
 
-export function saveIntake({ mobile, name, age, gender, address, date }) {
-  return post({ action: 'saveIntake', mobile, name, age, gender, address, date });
+// patientId / newPatient say which patient on this number the intake is for.
+// Without them the server matched on the number alone and took the first row,
+// so adding a second person on a shared family phone edited the first one.
+export function saveIntake({ mobile, name, age, gender, address, date, patientId, newPatient }) {
+  const payload = { action: 'saveIntake', mobile, name, age, gender, address, date };
+  if (patientId) payload.patientId = patientId;
+  if (newPatient) payload.newPatient = true;
+  return post(payload);
+}
+
+// Moves or cancels the appointment on the Visits row and the clinic's Google
+// Calendar. The Appointments tab's own reschedule and cancel go to DynamoDB
+// through the WhatsApp service, which cannot see the sheet or the calendar.
+// An empty date cancels.
+export function setAppointment({ visitId, date, time }) {
+  return post({ action: 'setAppointment', visitId, date: date || '', time: time || '', noSnapshot: true });
 }
 
 // Edits a patient's details without creating a visit. Only the fields passed
@@ -381,8 +475,8 @@ export function uploadQr({ dataUrl, filename }) {
   return post({ action: 'uploadQr', dataUrl, filename });
 }
 
-export function portalCheckin({ mobile, name, age, gender, email }) {
-  return post({ action: 'portalCheckin', mobile, name, age, gender, email });
+export function portalCheckin({ mobile, name, age, gender, address, email }) {
+  return post({ action: 'portalCheckin', mobile, name, age, gender, address, email });
 }
 
 export function savePatientProblem({ patientId, visitId, patientProblem }) {

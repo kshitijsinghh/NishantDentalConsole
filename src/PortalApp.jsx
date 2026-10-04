@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { fetchList, portalCheckin, savePatientProblem, getDocumentUrl, fetchOrg, generatePrescriptionPdf, generateReceiptPdf } from './api';
+import { fetchList, fetchPatientSnapshot, portalCheckin, savePatientProblem, getDocumentUrl, fetchOrg, generatePrescriptionPdf, generateReceiptPdf } from './api';
+import { signInWithFirebaseToken, signInWithGooglePatientToken, requestPortalOtp, signInWithPortalOtp, hasLiveToken, clearSession as clearPortalSession } from './auth';
 import { getFirebaseAuth, RecaptchaVerifier, signInWithPhoneNumber, signOut as firebaseSignOut } from './firebase';
 
 /* ─── helpers ─── */
@@ -347,6 +348,10 @@ export default function PortalApp() {
   const [otpStep, setOtpStep] = useState(false);
   const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', '']);
   const [sendingOtp, setSendingOtp] = useState(false);
+  // WhatsApp is the default: it costs the clinic less than an SMS and the
+  // patient almost certainly has it open already. SMS stays as the fallback
+  // for a number with no WhatsApp account.
+  const [otpChannel, setOtpChannel] = useState('whatsapp');
   const [verifyingOtp, setVerifyingOtp] = useState(false);
   const [resendTimer, setResendTimer] = useState(0);
   const otpRefs = useRef([]);
@@ -360,7 +365,7 @@ export default function PortalApp() {
   const [myPatientId, setMyPatientId] = useState('');
 
   /* ── registration form ── */
-  const [reg, setReg] = useState({ mobile: '', name: '', age: '', gender: '' });
+  const [reg, setReg] = useState({ mobile: '', name: '', age: '', gender: '', address: '' });
   const [regError, setRegError] = useState('');
   const [regPickedId, setRegPickedId] = useState('');
   const [regAddingMember, setRegAddingMember] = useState(false);
@@ -402,25 +407,35 @@ export default function PortalApp() {
   const loadList = useCallback(async (isRefresh) => {
     if (isRefresh) setRefreshing(true); else setLoading(true);
     try {
-      const res = await fetchList();
+      const res = await loadPortalData();
       applySnapshot(res);
       setLoadError('');
+      return res;
     } catch (err) {
       setLoadError(errText(err, 'Something went wrong, please try again'));
+      return null;
     } finally {
       if (isRefresh) setRefreshing(false); else setLoading(false);
     }
   }, []);
 
   /* ─── init: restore session, load data ─── */
+  // Data is fetched ONLY once a token exists. Fetching first is what broke
+  // the portal when the clinic switched authentication on: the scoped read
+  // was refused, the unscoped fallback was refused too, and the error screen
+  // rendered before the patient ever reached the login form.
   useEffect(() => {
-    loadList(false);
     fetchOrg().then(o => { if (o) setOrg(o); });
+    if (!hasLiveToken()) { setLoading(false); return; }
+    (async () => {
+      const snap = await loadList(false);
+      if (snap) restoreFromSession(snap);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadList]);
 
-  /* Once db is loaded, restore session */
-  useEffect(() => {
-    if (!db) return;
+  /* Route a returning patient whose token is still alive. */
+  function restoreFromSession(data) {
     try {
       const raw = localStorage.getItem(SESSION_KEY);
       if (!raw) return;
@@ -429,9 +444,9 @@ export default function PortalApp() {
 
       if (s.mobile) {
         setAuthedMobile(s.mobile);
-        const matches = findAllByMobile(db, s.mobile);
+        const matches = findAllByMobile(data, s.mobile);
         if (matches.length > 0) {
-          restorePatient(matches[0].patientId);
+          restorePatient(matches[0].patientId, data);
         } else {
           setView('register');
           setReg(r => ({ ...r, mobile: s.mobile }));
@@ -441,21 +456,20 @@ export default function PortalApp() {
 
       if (s.email) {
         setAuthedEmail(s.email);
-        const found = db.order.find(id => (db.patients[id].email || '').toLowerCase() === s.email.toLowerCase());
+        const found = data.order.find(id => (data.patients[id].email || '').toLowerCase() === s.email.toLowerCase());
         if (found) {
-          restorePatient(found);
+          restorePatient(found, data);
         } else {
           setView('register');
         }
       }
     } catch { /* ignore */ }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [db !== null]);
+  }
 
-  function restorePatient(pid) {
+  function restorePatient(pid, data) {
     setMyPatientId(pid);
     setView('home');
-    const p = db.patients[pid];
+    const p = (data || db).patients[pid];
     if (p) {
       const t = localToday();
       const openV = p.visits.filter(v => !v.done && v.date === t).sort((a, b) => (b.no || 0) - (a.no || 0))[0];
@@ -486,10 +500,11 @@ export default function PortalApp() {
     window.location.href = authUrl;
   }
 
-  function onGoogleAuthComplete(userEmail) {
+  async function onGoogleAuthComplete(userEmail) {
     try { localStorage.setItem(SESSION_KEY, JSON.stringify({ email: userEmail })); } catch { /* */ }
     setAuthedEmail(userEmail);
     setAuthChecking(false);
+    const db = await loadList(false);
     if (!db) { setView('register'); return; }
     const found = db.order.find(id => (db.patients[id].email || '').toLowerCase() === userEmail.toLowerCase());
     if (found) {
@@ -508,7 +523,7 @@ export default function PortalApp() {
     } else {
       setMyPatientId('');
       setView('register');
-      setReg({ mobile: '', name: '', age: '', gender: '' });
+      setReg({ mobile: '', name: '', age: '', gender: '', address: '' });
       setRegError('');
       setRegPickedId('');
       setRegAddingMember(false);
@@ -529,14 +544,18 @@ export default function PortalApp() {
       headers: { Authorization: 'Bearer ' + accessToken },
     })
       .then(r => r.json())
-      .then(info => {
+      .then(async info => {
         const userEmail = (info.email || '').toLowerCase();
         if (!userEmail) {
           setAuthError('Could not get your email from Google.');
           setAuthChecking(false);
           return;
         }
-        onGoogleAuthComplete(userEmail);
+        // Exchange Google's proof for a PatientPad token scoped to this
+        // email, so the clinic server returns this patient's records only.
+        try { await signInWithGooglePatientToken(accessToken); }
+        catch { /* a clinic still running with authMode off needs no token */ }
+        await onGoogleAuthComplete(userEmail);
       })
       .catch(() => { setAuthError('Something went wrong, please try again.'); setAuthChecking(false); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -571,6 +590,24 @@ export default function PortalApp() {
     if (!m || m.length !== 10) { setAuthError('Please enter a valid 10-digit mobile number.'); return; }
     setAuthError('');
     setSendingOtp(true);
+
+    if (otpChannel === 'whatsapp') {
+      try {
+        await requestPortalOtp(m);
+        setOtpStep(true);
+        setOtpDigits(['', '', '', '', '', '']);
+        startResendTimer();
+      } catch (err) {
+        // The server's message is already patient-facing — it says whether
+        // this is a rate limit or a delivery failure, and never whether the
+        // number belongs to a patient here.
+        setAuthError(errText(err, 'Could not send the code on WhatsApp. Try SMS instead.'));
+      } finally {
+        setSendingOtp(false);
+      }
+      return;
+    }
+
     try {
       clearRecaptcha();
       const verifier = setupRecaptcha();
@@ -594,6 +631,20 @@ export default function PortalApp() {
     if (resendTimer > 0) return;
     setAuthError('');
     setSendingOtp(true);
+
+    if (otpChannel === 'whatsapp') {
+      try {
+        await requestPortalOtp(normMobile(loginMobile));
+        setOtpDigits(['', '', '', '', '', '']);
+        startResendTimer();
+      } catch (err) {
+        setAuthError(errText(err, 'Could not resend the code. Please try again.'));
+      } finally {
+        setSendingOtp(false);
+      }
+      return;
+    }
+
     try {
       clearRecaptcha();
       const verifier = setupRecaptcha();
@@ -645,10 +696,35 @@ export default function PortalApp() {
     const m = normMobile(loginMobile);
     setAuthError('');
     setVerifyingOtp(true);
+
+    if (otpChannel === 'whatsapp') {
+      try {
+        // The clinic server checks the code and returns the patient token in
+        // one step — there is no Firebase credential in this path.
+        await signInWithPortalOtp(m, code);
+        await onOtpVerified(m);
+      } catch (err) {
+        setAuthError(errText(err, 'That code is not right, or it has expired.'));
+      } finally {
+        setVerifyingOtp(false);
+      }
+      return;
+    }
+
     try {
       if (!confirmationRef.current) { setAuthError('Session expired. Please send OTP again.'); setVerifyingOtp(false); return; }
-      await confirmationRef.current.confirm(code);
-      onOtpVerified(m);
+      const cred = await confirmationRef.current.confirm(code);
+      // Firebase has now proven the phone number. Exchange that proof for a
+      // PatientPad token scoped to it, so the clinic server returns this
+      // patient's records and nothing else.
+      try {
+        const idToken = await cred.user.getIdToken();
+        await signInWithFirebaseToken(idToken);
+      } catch {
+        // A clinic still running with authMode off needs no token; the read
+        // below falls back and behaves exactly as before.
+      }
+      await onOtpVerified(m);
     } catch (err) {
       const errCode = err?.code || '';
       if (errCode === 'auth/invalid-verification-code') setAuthError('Invalid OTP. Please check and try again.');
@@ -659,9 +735,26 @@ export default function PortalApp() {
     }
   }
 
-  function onOtpVerified(mobile) {
+  // Scoped read. The unscoped fallback exists only for a clinic that has not
+  // been migrated to authentication yet — there the Lambda issues no token at
+  // all and the server has nothing to scope by. Once we DO hold a token, a
+  // refusal is a real error and must surface rather than quietly pulling the
+  // whole clinic down to the browser.
+  async function loadPortalData() {
+    try {
+      return await fetchPatientSnapshot();
+    } catch (err) {
+      const refused = err && /requires a token|Not authorised/i.test(String(err.message || ''));
+      if (refused && !hasLiveToken()) return await fetchList();
+      throw err;
+    }
+  }
+
+  async function onOtpVerified(mobile) {
     try { localStorage.setItem(SESSION_KEY, JSON.stringify({ mobile })); } catch { /* */ }
     setAuthedMobile(mobile);
+    // The scoped snapshot can only be fetched now that a token exists.
+    const db = await loadList(false);
     if (!db) { setView('register'); setReg(r => ({ ...r, mobile })); return; }
     const matches = findAllByMobile(db, mobile);
     if (matches.length > 0) {
@@ -681,7 +774,7 @@ export default function PortalApp() {
     } else {
       setMyPatientId('');
       setView('register');
-      setReg({ mobile, name: '', age: '', gender: '' });
+      setReg({ mobile, name: '', age: '', gender: '', address: '' });
       setRegError('');
       setRegPickedId('');
       setRegAddingMember(false);
@@ -691,6 +784,7 @@ export default function PortalApp() {
 
   function signOut() {
     try { firebaseSignOut(getFirebaseAuth()); } catch {}
+    try { clearPortalSession(); } catch {}
     try { localStorage.removeItem(SESSION_KEY); } catch { /* */ }
     clearRecaptcha();
     confirmationRef.current = null;
@@ -749,9 +843,12 @@ export default function PortalApp() {
     const checkinName = regPickedId && db.patients[regPickedId] ? db.patients[regPickedId].name : reg.name.trim();
     const checkinAge = regPickedId && db.patients[regPickedId] ? db.patients[regPickedId].age : reg.age;
     const checkinGender = regPickedId && db.patients[regPickedId] ? db.patients[regPickedId].gender : reg.gender;
+    // Optional, exactly as it is on the clinic console's intake form.
+    const checkinAddress = regPickedId && db.patients[regPickedId]
+      ? (db.patients[regPickedId].address || '') : (reg.address || '').trim();
 
     try {
-      const res = await portalCheckin({ mobile, name: checkinName, age: checkinAge, gender: checkinGender, email: authedEmail });
+      const res = await portalCheckin({ mobile, name: checkinName, age: checkinAge, gender: checkinGender, address: checkinAddress, email: authedEmail });
       applySnapshot(res);
 
       const pid = res.patientId || db.order.find(id => {
@@ -766,7 +863,7 @@ export default function PortalApp() {
         setProblemSaved(false);
         setEditingProblem(false);
       }
-      setReg({ mobile: '', name: '', age: '', gender: '' });
+      setReg({ mobile: '', name: '', age: '', gender: '', address: '' });
       setRegPickedId('');
       setRegAddingMember(false);
       setIsAddingForFamily(false);
@@ -826,7 +923,7 @@ export default function PortalApp() {
     setRegAddingMember(true);
     setRegPickedId('');
     setRegError('');
-    setReg({ mobile: authedMobile || (me ? me.mobile : ''), name: '', age: '', gender: '' });
+    setReg({ mobile: authedMobile || (me ? me.mobile : ''), name: '', age: '', gender: '', address: '' });
     setMemberSheet(false);
   }
 
@@ -848,7 +945,7 @@ export default function PortalApp() {
     setRegAddingMember(false);
     setRegPickedId(myPatientId);
     setRegError('');
-    setReg({ mobile: authedMobile || me.mobile, name: me.name, age: me.age, gender: me.gender });
+    setReg({ mobile: authedMobile || me.mobile, name: me.name, age: me.age, gender: me.gender, address: me.address || '' });
   }
 
   /* ─── switch to another family member ─── */
@@ -882,7 +979,7 @@ export default function PortalApp() {
   async function refreshQueue() {
     setRefreshing(true);
     try {
-      const res = await fetchList();
+      const res = await loadPortalData();
       applySnapshot(res);
     } catch { /* ignore */ }
     setRefreshing(false);
@@ -1208,7 +1305,7 @@ export default function PortalApp() {
                 </h1>
                 <p style={{ color: '#5c7a76', fontSize: 15, marginTop: 8, textWrap: 'pretty' }}>
                   {otpStep
-                    ? <>We sent a 6-digit code to <strong>+91 {loginMobile}</strong></>
+                    ? <>We sent a 6-digit code {otpChannel === 'whatsapp' ? 'on WhatsApp' : 'by SMS'} to <strong>+91 {loginMobile}</strong></>
                     : 'Sign in to check in for your visit, get your queue number and see your treatment details.'}
                 </p>
 
@@ -1220,6 +1317,23 @@ export default function PortalApp() {
                 ) : !otpStep ? (
                   <div style={{ marginTop: 20 }}>
                     <div style={{ textAlign: 'left' }}>
+                      <label style={{ display: 'block', fontWeight: 700, fontSize: '13.5px', marginBottom: 7, color: '#0e3b39' }}>Where should we send your code?</label>
+                      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+                        {[['whatsapp', 'WhatsApp'], ['sms', 'SMS']].map(([val, label]) => (
+                          <button
+                            key={val}
+                            type="button"
+                            onClick={() => { setOtpChannel(val); setAuthError(''); }}
+                            style={{
+                              flex: 1, padding: '11px 10px', borderRadius: 11, cursor: 'pointer',
+                              fontWeight: 700, fontSize: '14px',
+                              border: otpChannel === val ? '1.5px solid #0e756c' : '1px solid #d6e7e3',
+                              background: otpChannel === val ? '#e6f4f2' : '#f7fbfa',
+                              color: otpChannel === val ? '#0e756c' : '#5c7a76',
+                            }}
+                          >{label}</button>
+                        ))}
+                      </div>
                       <label style={{ display: 'block', fontWeight: 700, fontSize: '13.5px', marginBottom: 7, color: '#0e3b39' }}>Mobile number</label>
                       <input
                         value={loginMobile}
@@ -1233,7 +1347,7 @@ export default function PortalApp() {
                         background: sendingOtp ? '#8aa8a3' : '#ef5a3c', color: '#fff',
                         fontWeight: 700, fontSize: 16, cursor: sendingOtp ? 'default' : 'pointer',
                       }}>
-                        {sendingOtp ? 'Sending OTP...' : 'Send OTP'}
+                        {sendingOtp ? 'Sending code...' : (otpChannel === 'whatsapp' ? 'Send code on WhatsApp' : 'Send code by SMS')}
                       </button>
                     </div>
 
@@ -1344,7 +1458,7 @@ export default function PortalApp() {
                             setRegPickedId(m.patientId);
                             setRegAddingMember(false);
                             setRegError('');
-                            setReg(r => ({ ...r, name: m.name, age: m.age, gender: m.gender }));
+                            setReg(r => ({ ...r, name: m.name, age: m.age, gender: m.gender, address: m.address || '' }));
                           }} style={{
                             textAlign: 'left', width: '100%', display: 'flex', alignItems: 'center', gap: 12,
                             padding: 13, border: selected ? '2px solid #12a094' : '1px solid #e2efec',
@@ -1407,6 +1521,15 @@ export default function PortalApp() {
                           {GENDERS.map(g => <option key={g} value={g}>{g}</option>)}
                         </select>
                       </div>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontWeight: 700, fontSize: '13.5px', marginBottom: 7 }}>Address</label>
+                      <textarea
+                        className="fld" value={reg.address}
+                        onChange={e => setReg(r => ({ ...r, address: e.target.value }))}
+                        placeholder="House / street, area, city" rows={2} readOnly={!!regPickedId}
+                        style={{ width: '100%', padding: '13px 14px', border: '1px solid #d6e7e3', borderRadius: 11, fontSize: 16, background: regPickedId ? '#f0f6f5' : '#f7fbfa', fontFamily: 'inherit', resize: 'vertical' }}
+                      />
                     </div>
                   </div>
                 )}
